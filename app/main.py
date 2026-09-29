@@ -41,6 +41,22 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mikrotik-gate")
 
 
+class _TrafficPollingLogFilter(logging.Filter):
+    """La dashboard interroga /interfaces/*/traffic e /clients/traffic ogni pochi secondi
+    per il traffico in tempo reale: senza questo filtro, il log di accesso (e quindi anche
+    il log del container su RouterOS) viene sommerso da quelle richieste, rendendo
+    praticamente introvabile un errore reale in mezzo. Silenzia solo le voci di access-log
+    relative a questi due endpoint, lasciando intatto tutto il resto (inclusi gli warning
+    che questo servizio emette quando RouterOS rifiuta una richiesta)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        return "/traffic" not in message
+
+
+logging.getLogger("uvicorn.access").addFilter(_TrafficPollingLogFilter())
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
