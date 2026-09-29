@@ -11,7 +11,9 @@ env:
 
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest
+    # Runner ARM64 nativo di GitHub: build reale, senza emulazione QEMU
+    # (piu' veloce e affidabile di un build multi-arch via QEMU su runner x86).
+    runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
       packages: write
@@ -19,9 +21,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up QEMU (per build multi-architettura)
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -42,11 +41,11 @@ jobs:
             type=raw,value=latest
             type=sha,format=short
 
-      - name: Build e push (linux/amd64, linux/arm64, linux/arm/v7)
+      - name: Build e push (linux/arm64)
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          platforms: linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
