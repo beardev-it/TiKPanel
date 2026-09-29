@@ -63,9 +63,21 @@ Variabili principali:
 | `MIKROTIK_USER` / `MIKROTIK_PASSWORD` | Credenziali dell'utente API dedicato |
 | `MIKROTIK_USE_SSL` | `true`/`false`, usa https verso il router |
 | `MIKROTIK_VERIFY_SSL` | `true` per validare il certificato TLS del router (spesso self-signed → `false`) |
-| `API_KEY` | Chiave segreta richiesta nell'header `X-API-Key` per usare **questo** servizio |
+| `API_KEY` | Chiave segreta richiesta nell'header `X-API-Key` per uso programmatico (script, curl, integrazioni) |
+| `SECRET_KEY` | **Obbligatoria.** Firma i token di sessione (JWT) rilasciati dal login della dashboard `/ui`. Deve essere diversa da `API_KEY`, lunga e casuale (es. `openssl rand -hex 32`). Senza questa variabile il container non si avvia. |
+| `SESSION_EXPIRE_MINUTES` | Durata della sessione dopo il login nella dashboard (default `480`, cioè 8 ore) |
+| `PUBLIC_BASE_URL` | URL base che il frontend usa per parlare col servizio. Lascia vuoto se la dashboard è servita dallo stesso container (caso normale) |
 | `BLOCK_ADDRESS_LIST` | Nome della address-list RouterOS usata per bloccare i client |
 | `AUTO_CREATE_FIREWALL_RULE` | Se `true`, crea automaticamente le regole firewall di drop per quella lista |
+
+## Dashboard web (`/ui`)
+
+Oltre alle API REST, il servizio espone una dashboard su `http://<host>:8000/ui` con tre sezioni
+(Interfacce, VLAN, Client). L'accesso avviene con un **login vero**, non con l'`API_KEY`: si
+inseriscono le proprie credenziali RouterOS, il backend le verifica in tempo reale contro RouterOS
+stesso (nessuna password viene mai salvata) e rilascia una sessione firmata, valida per la durata
+di `SESSION_EXPIRE_MINUTES`. Può accedere qualunque utente RouterOS con permessi `api`+`rest-api`
+(lo stesso gruppo usato per `MIKROTIK_USER`, o un gruppo dedicato per gli operatori della dashboard).
 
 ## Avvio con Docker
 

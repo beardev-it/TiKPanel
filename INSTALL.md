@@ -68,7 +68,8 @@ Apri `mikrotik-gate-full-setup.rsc`, personalizza in cima al file:
 |---|---|
 | `apiPassword` | password forte per l'utente `api-user` |
 | `diskSlot` | lo slot del tuo disco esterno (es. `usb1`) |
-| `gateApiKey` | chiave lunga e casuale — sarà la `X-API-Key` richiesta dal servizio |
+| `gateApiKey` | chiave lunga e casuale — sarà la `X-API-Key` per uso programmatico (script/curl) |
+| `gateSecretKey` | **obbligatoria**, diversa da `gateApiKey` — firma le sessioni di login della dashboard web `/ui`. Senza questa il container non parte |
 | `containerSubnet` / `containerIp` / `gatewayIp` | modifica solo se `172.16.99.0/24` è già in uso sulla tua rete |
 | `image` | lascia `ghcr.io/beardev-it/mikrotik-gate:latest` salvo tu voglia un'immagine tua |
 
@@ -98,6 +99,10 @@ Per un endpoint autenticato:
   http-header-field="X-API-Key: la-tua-gateApiKey" output=user
 ```
 Deve rispondere con la lista delle interfacce del router in formato JSON.
+
+Infine apri da un browser sulla tua LAN `http://<containerIp>:8000/ui` (dashboard **TikPanel**):
+il login richiede le tue credenziali RouterOS (non la `gateApiKey`), verificate in tempo reale
+contro RouterOS stesso — può accedere chiunque abbia un utente RouterOS con permessi `api`+`rest-api`.
 
 ---
 
