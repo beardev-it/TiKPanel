@@ -94,3 +94,15 @@ class ClientBlockIn(BaseModel):
 
 class ClientDisconnectIn(BaseModel):
     mac_address: str = Field(..., description="Indirizzo MAC del client da disconnettere forzatamente")
+
+
+class LoginIn(BaseModel):
+    username: str = Field(..., description="Nome utente RouterOS")
+    password: str = Field(..., description="Password RouterOS (mai persistita, solo verificata)")
+
+
+class LoginOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+    username: str

@@ -23,6 +23,31 @@ class RouterOSError(RuntimeError):
         self.detail = detail
 
 
+async def verify_user_credentials(
+    settings: Settings, username: str, password: str
+) -> bool:
+    """Verifica in tempo reale una coppia utente/password contro la REST API di RouterOS.
+
+    Usata dal login della dashboard: se la richiesta ha successo, l'utente esiste,
+    non è disabilitato e appartiene a un gruppo con permessi api/rest-api — RouterOS
+    stesso fa da "elenco degli utenti abilitati", senza bisogno di duplicarlo qui.
+    Non viene mai loggata né persistita la password.
+    """
+    scheme = "https" if settings.mikrotik_use_ssl else "http"
+    base_url = f"{scheme}://{settings.mikrotik_host}:{settings.mikrotik_port}/rest"
+    async with httpx.AsyncClient(
+        base_url=base_url,
+        auth=(username, password),
+        verify=settings.mikrotik_verify_ssl,
+        timeout=settings.mikrotik_timeout,
+    ) as client:
+        try:
+            resp = await client.get("/system/identity")
+        except httpx.TransportError as exc:
+            raise RouterOSError(f"Impossibile raggiungere il router MikroTik: {exc}", status_code=502) from exc
+        return resp.status_code == 200
+
+
 class RouterOSClient:
     """Wrapper sottile su httpx per parlare con la REST API di RouterOS."""
 

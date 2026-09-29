@@ -11,18 +11,21 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import Depends, FastAPI, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from .auth import create_session_token, decode_session_token
 from .config import Settings, get_settings
-from .routeros import RouterOSClient, RouterOSError
+from .routeros import RouterOSClient, RouterOSError, verify_user_credentials
 from .schemas import (
     ClientBlockIn,
     ClientDisconnectIn,
     ClientOut,
     InterfaceOut,
     InterfaceStateIn,
+    LoginIn,
+    LoginOut,
     VlanCreateIn,
     VlanOut,
     VlanUpdateIn,
@@ -73,6 +76,46 @@ async def health() -> dict:
 @app.get("/", tags=["meta"])
 async def root() -> dict:
     return {"service": "mikrotik-gate", "docs": "/docs", "ui": "/ui"}
+
+
+@app.get("/ui-config", tags=["meta"])
+async def ui_config(settings: Settings = Depends(get_settings)) -> dict:
+    """Configurazione di connessione per il frontend: nessun dato da inserire a mano.
+
+    Impostata una volta a livello di container (variabile d'ambiente PUBLIC_BASE_URL),
+    non richiesta all'utente della dashboard.
+    """
+    return {"apiBaseUrl": settings.public_base_url}
+
+
+# ---------------------------------------------------------------------------
+# Login (dashboard web)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/auth/login", response_model=LoginOut, tags=["auth"])
+async def login(body: LoginIn, settings: Settings = Depends(get_settings)) -> LoginOut:
+    ok = await verify_user_credentials(settings, body.username, body.password)
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Credenziali non valide, oppure l'utente non ha i permessi api/rest-api su RouterOS",
+        )
+    token, expires_in = create_session_token(settings, body.username)
+    return LoginOut(access_token=token, expires_in=expires_in, username=body.username)
+
+
+@app.get("/auth/me", tags=["auth"], dependencies=[Depends(require_api_key)])
+async def me(authorization: str | None = Header(default=None)) -> dict:
+    settings = get_settings()
+    if not authorization or not authorization.lower().startswith("bearer "):
+        # Autenticato con X-API-Key (uso programmatico), non c'è un utente associato
+        return {"username": None, "auth": "api-key"}
+    try:
+        payload = decode_session_token(settings, authorization[7:].strip())
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sessione non valida o scaduta")
+    return {"username": payload.get("sub"), "auth": "session"}
 
 
 # Dashboard web statica (bozza): serve i file in static/ su /ui.

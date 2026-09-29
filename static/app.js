@@ -1,49 +1,73 @@
 // mikrotik-gate — dashboard (bozza)
 // Nessuna dipendenza esterna: fetch + DOM puro.
+//
+// Autenticazione: login con le credenziali RouterOS dell'utente (verificate
+// dal server in tempo reale contro RouterOS stesso), poi si usa un token di
+// sessione (JWT) firmato dal server. Nessuna password viene mai salvata nel
+// browser: solo il token, che scade da solo dopo qualche ora.
 
-const LS_BASE_URL = "mikrotik-gate.baseUrl";
-const LS_API_KEY = "mikrotik-gate.apiKey";
+const LS_TOKEN = "mikrotik-gate.token";
+const LS_USERNAME = "mikrotik-gate.username";
 
 const state = {
-  baseUrl: localStorage.getItem(LS_BASE_URL) || "",
-  apiKey: localStorage.getItem(LS_API_KEY) || "",
+  baseUrl: "", // caricato da /ui-config all'avvio, non richiesto all'utente
+  token: localStorage.getItem(LS_TOKEN) || "",
+  username: localStorage.getItem(LS_USERNAME) || "",
 };
 
 // ---------- utility ----------
 
 function toast(message, kind = "") {
-  const el = document.getElementById("toast");
-  el.textContent = message;
-  el.className = "toast" + (kind ? " toast-" + kind : "");
-  el.classList.remove("hidden");
+  const box = document.getElementById("toast");
+  box.textContent = message;
+  box.className = "toast" + (kind ? " toast-" + kind : "");
+  box.classList.remove("hidden");
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => el.classList.add("hidden"), 3500);
+  toast._t = setTimeout(() => box.classList.add("hidden"), 3500);
 }
 
 function setConnStatus(status, text) {
-  const dot = document.getElementById("connDot");
-  const label = document.getElementById("connText");
-  dot.className = "dot dot-" + status;
-  label.textContent = text;
+  document.getElementById("connDot").className = "dot dot-" + status;
+  document.getElementById("connText").textContent = text;
 }
+
+function el(tag, attrs = {}, children = []) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") node.className = v;
+    else if (k === "text") node.textContent = v;
+    else if (k.startsWith("on") && typeof v === "function") node.addEventListener(k.slice(2), v);
+    else node.setAttribute(k, v);
+  }
+  for (const c of [].concat(children)) node.appendChild(c);
+  return node;
+}
+
+function escapeHtml(str) {
+  const d = document.createElement("div");
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+// ---------- chiamate API ----------
 
 async function api(path, options = {}) {
   const url = (state.baseUrl || "") + path;
   const headers = Object.assign(
     { "Content-Type": "application/json" },
-    state.apiKey ? { "X-API-Key": state.apiKey } : {},
+    state.token ? { Authorization: "Bearer " + state.token } : {},
     options.headers || {}
   );
   let resp;
   try {
     resp = await fetch(url, { ...options, headers });
   } catch (err) {
-    setConnStatus("error", "non raggiungibile");
+    setConnStatus("error", "servizio non raggiungibile");
     throw new Error("Impossibile contattare il servizio: " + err.message);
   }
   if (resp.status === 401) {
-    setConnStatus("error", "API key non valida");
-    throw new Error("API key non valida (401)");
+    logout("sessione scaduta, effettua di nuovo il login");
+    throw new Error("Sessione scaduta");
   }
   if (!resp.ok) {
     let detail = "";
@@ -59,17 +83,75 @@ async function api(path, options = {}) {
   return resp.json();
 }
 
-function el(tag, attrs = {}, children = []) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === "class") node.className = v;
-    else if (k === "text") node.textContent = v;
-    else if (k.startsWith("on") && typeof v === "function") node.addEventListener(k.slice(2), v);
-    else node.setAttribute(k, v);
-  }
-  for (const c of [].concat(children)) node.appendChild(c);
-  return node;
+// ---------- login / logout ----------
+
+function showLogin() {
+  document.getElementById("loginScreen").classList.remove("hidden");
+  document.getElementById("app").classList.add("hidden");
+  document.getElementById("userBadge").classList.add("hidden");
+  document.getElementById("btnLogout").classList.add("hidden");
+  setConnStatus("unknown", "non connesso");
 }
+
+function showApp() {
+  document.getElementById("loginScreen").classList.add("hidden");
+  document.getElementById("app").classList.remove("hidden");
+  const badge = document.getElementById("userBadge");
+  badge.textContent = state.username;
+  badge.classList.remove("hidden");
+  document.getElementById("btnLogout").classList.remove("hidden");
+}
+
+function logout(message) {
+  state.token = "";
+  state.username = "";
+  localStorage.removeItem(LS_TOKEN);
+  localStorage.removeItem(LS_USERNAME);
+  showLogin();
+  if (message) toast(message, "error");
+}
+
+document.getElementById("btnLogout").addEventListener("click", () => logout());
+
+document.getElementById("loginForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const username = document.getElementById("loginUsername").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errorBox = document.getElementById("loginError");
+  errorBox.classList.add("hidden");
+
+  const submitBtn = e.target.querySelector("button[type=submit]");
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Accesso in corso…";
+
+  try {
+    const url = (state.baseUrl || "") + "/auth/login";
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || body.error || `Errore ${resp.status}`);
+    }
+    const data = await resp.json();
+    state.token = data.access_token;
+    state.username = data.username;
+    localStorage.setItem(LS_TOKEN, state.token);
+    localStorage.setItem(LS_USERNAME, state.username);
+    document.getElementById("loginPassword").value = "";
+    setConnStatus("ok", "connesso");
+    showApp();
+    loadInterfaces();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.classList.remove("hidden");
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Accedi";
+  }
+});
 
 // ---------- tabs ----------
 
@@ -84,39 +166,6 @@ document.querySelectorAll(".tab").forEach((tab) => {
     if (tab.dataset.tab === "clients") loadClients();
   });
 });
-
-// ---------- settings modal ----------
-
-const modal = document.getElementById("settingsModal");
-document.getElementById("btnSettings").addEventListener("click", () => {
-  document.getElementById("cfgBaseUrl").value = state.baseUrl;
-  document.getElementById("cfgApiKey").value = state.apiKey;
-  modal.classList.remove("hidden");
-});
-document.getElementById("cfgCancel").addEventListener("click", () => modal.classList.add("hidden"));
-document.getElementById("cfgSave").addEventListener("click", async () => {
-  state.baseUrl = document.getElementById("cfgBaseUrl").value.trim().replace(/\/$/, "");
-  state.apiKey = document.getElementById("cfgApiKey").value.trim();
-  localStorage.setItem(LS_BASE_URL, state.baseUrl);
-  localStorage.setItem(LS_API_KEY, state.apiKey);
-  modal.classList.add("hidden");
-  await checkHealth();
-  loadInterfaces();
-});
-
-async function checkHealth() {
-  try {
-    const url = (state.baseUrl || "") + "/health";
-    const resp = await fetch(url);
-    if (resp.ok) {
-      setConnStatus("ok", "connesso");
-    } else {
-      setConnStatus("error", "servizio non raggiungibile");
-    }
-  } catch (err) {
-    setConnStatus("error", "servizio non raggiungibile");
-  }
-}
 
 // ---------- interfacce ----------
 
@@ -335,19 +384,47 @@ document.getElementById("refreshClients").addEventListener("click", loadClients)
 
 // ---------- avvio ----------
 
-function escapeHtml(str) {
-  const d = document.createElement("div");
-  d.textContent = str;
-  return d.innerHTML;
+async function loadUiConfig() {
+  try {
+    const resp = await fetch("/ui-config");
+    if (resp.ok) {
+      const data = await resp.json();
+      state.baseUrl = data.apiBaseUrl || "";
+    }
+  } catch (_) {
+    // se /ui-config non è raggiungibile si resta sulla stessa origine (default)
+  }
+}
+
+async function validateExistingSession() {
+  try {
+    const resp = await fetch((state.baseUrl || "") + "/auth/me", {
+      headers: { Authorization: "Bearer " + state.token },
+    });
+    if (!resp.ok) return false;
+    const data = await resp.json();
+    return data.auth === "session" && data.username === state.username;
+  } catch (_) {
+    return false;
+  }
 }
 
 (async function init() {
-  if (!state.apiKey) {
-    setConnStatus("unknown", "configura la connessione");
-    modal.classList.remove("hidden");
-    document.getElementById("cfgBaseUrl").value = state.baseUrl;
-    return;
+  await loadUiConfig();
+
+  if (state.token && state.username) {
+    const valid = await validateExistingSession();
+    if (valid) {
+      setConnStatus("ok", "connesso");
+      showApp();
+      loadInterfaces();
+      return;
+    }
+    // sessione scaduta o non valida: torna al login senza allarmare l'utente
+    state.token = "";
+    state.username = "";
+    localStorage.removeItem(LS_TOKEN);
+    localStorage.removeItem(LS_USERNAME);
   }
-  await checkHealth();
-  loadInterfaces();
+  showLogin();
 })();

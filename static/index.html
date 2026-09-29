@@ -15,10 +15,31 @@
     <div class="conn-status">
       <span id="connDot" class="dot dot-unknown"></span>
       <span id="connText">non connesso</span>
-      <button id="btnSettings" class="btn btn-ghost" title="Impostazioni connessione">⚙</button>
+      <span id="userBadge" class="user-badge hidden"></span>
+      <button id="btnLogout" class="btn btn-ghost hidden" title="Esci">Esci</button>
     </div>
   </header>
 
+  <!-- Schermata di login -->
+  <div id="loginScreen" class="login-screen">
+    <form id="loginForm" class="login-card">
+      <div class="brand login-brand">
+        <span class="brand-dot"></span>
+        <span>mikrotik-gate</span>
+      </div>
+      <p class="muted">Accedi con le tue credenziali RouterOS</p>
+      <label>Utente
+        <input type="text" id="loginUsername" autocomplete="username" required />
+      </label>
+      <label>Password
+        <input type="password" id="loginPassword" autocomplete="current-password" required />
+      </label>
+      <button type="submit" class="btn btn-primary login-submit">Accedi</button>
+      <p id="loginError" class="login-error hidden"></p>
+    </form>
+  </div>
+
+  <div id="app" class="hidden">
   <nav class="tabs">
     <button class="tab active" data-tab="interfaces">Interfacce</button>
     <button class="tab" data-tab="vlans">VLAN</button>
@@ -83,23 +104,6 @@
       </table>
     </section>
   </main>
-
-  <!-- Modale impostazioni connessione -->
-  <div id="settingsModal" class="modal-backdrop hidden">
-    <div class="modal">
-      <h3>Connessione a mikrotik-gate</h3>
-      <p class="muted">Questi valori restano solo nel tuo browser (localStorage).</p>
-      <label>URL base del servizio
-        <input type="text" id="cfgBaseUrl" placeholder="http://172.16.99.2:8000 (vuoto = stessa origine)" />
-      </label>
-      <label>X-API-Key
-        <input type="password" id="cfgApiKey" placeholder="la tua API key" />
-      </label>
-      <div class="modal-actions">
-        <button id="cfgCancel" class="btn btn-ghost">Annulla</button>
-        <button id="cfgSave" class="btn btn-primary">Salva e connetti</button>
-      </div>
-    </div>
   </div>
 
   <div id="toast" class="toast hidden"></div>

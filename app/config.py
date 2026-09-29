@@ -20,7 +20,19 @@ class Settings(BaseSettings):
     mikrotik_timeout: float = Field(10.0, description="Timeout (secondi) per le chiamate a RouterOS")
 
     # Sicurezza di questo servizio
-    api_key: str = Field(..., description="Chiave richiesta nell'header X-API-Key per usare queste API")
+    api_key: str = Field(..., description="Chiave richiesta nell'header X-API-Key per l'uso programmatico delle API")
+
+    # Login utenti (dashboard web): sessione firmata dopo verifica live delle
+    # credenziali contro RouterOS stesso — nessuna password mai persistita.
+    secret_key: str = Field(
+        ..., description="Chiave usata per firmare i token di sessione (JWT). Generane una lunga e casuale."
+    )
+    session_expire_minutes: int = Field(480, description="Durata della sessione dopo il login (default 8 ore)")
+
+    # URL base che il frontend deve usare per parlare con questo servizio.
+    # Vuoto = stessa origine (caso normale: dashboard servita dallo stesso container).
+    # Valorizzalo solo se la dashboard viene servita da un host diverso dal backend.
+    public_base_url: str = Field("", description="URL base dell'API per il frontend, vuoto = stessa origine")
 
     # Comportamento del blocco client
     block_address_list: str = Field(

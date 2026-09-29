@@ -36,6 +36,7 @@
 :local containerRootDir ($diskSlot . "/containers/mikrotik-gate")
 :local envListName "mikrotik-gate-env"
 :local gateApiKey "CAMBIA-CON-UNA-CHIAVE-LUNGA-E-CASUALE"
+:local gateSecretKey "CAMBIA-CON-UN-ALTRA-CHIAVE-LUNGA-E-CASUALE-DIVERSA"
 
 # =============================================================================
 # 1. Certificato TLS self-signed per la REST API (www-ssl)
@@ -105,6 +106,7 @@
 /container/envs add name=$envListName key=MIKROTIK_USER value=$apiUser
 /container/envs add name=$envListName key=MIKROTIK_PASSWORD value=$apiPassword
 /container/envs add name=$envListName key=API_KEY value=$gateApiKey
+/container/envs add name=$envListName key=SECRET_KEY value=$gateSecretKey
 :log info "mikrotik-gate: variabili d'ambiente del container configurate"
 
 # =============================================================================
