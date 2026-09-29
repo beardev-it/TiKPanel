@@ -96,6 +96,29 @@ class ClientDisconnectIn(BaseModel):
     mac_address: str = Field(..., description="Indirizzo MAC del client da disconnettere forzatamente")
 
 
+class WifiClientOut(BaseModel):
+    mac_address: str
+    ip_address: Optional[str] = None
+    hostname: Optional[str] = None
+    signal_strength: Optional[str] = None
+    uptime: Optional[str] = None
+
+    model_config = {"extra": "allow"}
+
+
+class WifiNetworkOut(BaseModel):
+    name: str
+    ssid: Optional[str] = None
+    disabled: Optional[bool] = None
+    running: Optional[bool] = None
+    source: Optional[str] = Field(
+        default=None, description="Stack WiFi che espone questa radio: wifi, capsman, wireless o sconosciuta"
+    )
+    clients: list[WifiClientOut] = Field(default_factory=list)
+
+    model_config = {"populate_by_name": True}
+
+
 class LoginIn(BaseModel):
     username: str = Field(..., description="Nome utente RouterOS")
     password: str = Field(..., description="Password RouterOS (mai persistita, solo verificata)")

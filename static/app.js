@@ -8,12 +8,43 @@
 
 const LS_TOKEN = "mikrotik-gate.token";
 const LS_USERNAME = "mikrotik-gate.username";
+const LS_THEME = "mikrotik-gate.theme";
 
 const state = {
   baseUrl: "", // caricato da /ui-config all'avvio, non richiesto all'utente
   token: localStorage.getItem(LS_TOKEN) || "",
   username: localStorage.getItem(LS_USERNAME) || "",
 };
+
+// ---------- tema chiaro/scuro ----------
+
+function applyTheme(theme) {
+  // theme: "light" | "dark". Nessun valore salvato = segue le preferenze di sistema
+  // (gestito via prefers-color-scheme in CSS), qui invece è una scelta esplicita.
+  document.documentElement.setAttribute("data-theme", theme);
+}
+
+function initTheme() {
+  const saved = localStorage.getItem(LS_THEME);
+  if (saved === "light" || saved === "dark") {
+    applyTheme(saved);
+  }
+  // se non c'è nulla di salvato, lascia decidere il CSS (prefers-color-scheme)
+}
+
+function currentTheme() {
+  const attr = document.documentElement.getAttribute("data-theme");
+  if (attr === "light" || attr === "dark") return attr;
+  return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+document.getElementById("btnTheme").addEventListener("click", () => {
+  const next = currentTheme() === "dark" ? "light" : "dark";
+  applyTheme(next);
+  localStorage.setItem(LS_THEME, next);
+});
+
+initTheme();
 
 // ---------- utility ----------
 
@@ -164,6 +195,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
     if (tab.dataset.tab === "interfaces") loadInterfaces();
     if (tab.dataset.tab === "vlans") loadVlans();
     if (tab.dataset.tab === "clients") loadClients();
+    if (tab.dataset.tab === "wifi") loadWifiNetworks();
   });
 });
 
@@ -181,15 +213,16 @@ async function loadInterfaces() {
     body.innerHTML = "";
     for (const iface of data) {
       const statusBadge = el("span", {
-        class: "badge " + (iface.disabled ? "badge-off" : "badge-ok"),
+        class: "badge " + (iface.disabled ? "badge-down" : "badge-up"),
         text: iface.disabled ? "disabilitata" : "abilitata",
       });
       const runningBadge = el("span", {
-        class: "badge " + (iface.running ? "badge-ok" : "badge-off"),
+        class: "badge " + (iface.running ? "badge-up" : "badge-down"),
         text: iface.running ? "up" : "down",
       });
       const toggleBtn = el("button", {
-        class: "btn btn-sm " + (iface.disabled ? "btn-primary" : "btn-warn"),
+        // verde/rosso riflette lo stato attuale della rete (up/down), non l'azione del pulsante
+        class: "btn btn-sm " + (iface.running ? "btn-up" : "btn-down"),
         text: iface.disabled ? "Abilita" : "Disabilita",
         onclick: () => toggleInterface(iface.name, !iface.disabled),
       });
@@ -238,9 +271,10 @@ async function loadVlans() {
     }
     body.innerHTML = "";
     for (const vlan of data) {
+      const isUp = !vlan.disabled && vlan.running !== false;
       const statusBadge = el("span", {
-        class: "badge " + (vlan.disabled ? "badge-off" : "badge-ok"),
-        text: vlan.disabled ? "disabilitata" : "abilitata",
+        class: "badge " + (isUp ? "badge-up" : "badge-down"),
+        text: vlan.disabled ? "disabilitata" : vlan.running === false ? "down" : "attiva",
       });
       const deleteBtn = el("button", {
         class: "btn btn-sm btn-danger",
@@ -310,11 +344,11 @@ async function loadClients() {
     body.innerHTML = "";
     for (const client of data) {
       const blockedBadge = el("span", {
-        class: "badge " + (client.blocked ? "badge-danger" : "badge-ok"),
+        class: "badge " + (client.blocked ? "badge-down" : "badge-up"),
         text: client.blocked ? "bloccato" : "libero",
       });
       const blockBtn = el("button", {
-        class: "btn btn-sm " + (client.blocked ? "btn-primary" : "btn-warn"),
+        class: "btn btn-sm " + (client.blocked ? "btn-down" : "btn-up"),
         text: client.blocked ? "Sblocca" : "Blocca",
         onclick: () => (client.blocked ? unblockClient(client) : blockClient(client)),
       });
@@ -381,6 +415,77 @@ async function disconnectClient(client) {
 }
 
 document.getElementById("refreshClients").addEventListener("click", loadClients);
+
+// ---------- reti WiFi ----------
+
+function formatSourceLabel(source) {
+  return { wifi: "WiFi", capsman: "CAPsMAN", wireless: "Wireless", sconosciuta: "" }[source] || "";
+}
+
+async function loadWifiNetworks() {
+  const container = document.getElementById("wifiNetworks");
+  container.innerHTML = `<p class="empty">Caricamento…</p>`;
+  try {
+    const networks = await api("/wifi-networks");
+    if (!networks.length) {
+      container.innerHTML = `<p class="empty">Nessuna rete WiFi configurata su questo router</p>`;
+      setConnStatus("ok", "connesso");
+      return;
+    }
+    container.innerHTML = "";
+    for (const net of networks) {
+      const isUp = !net.disabled && net.running !== false;
+      const statusBadge = el("span", {
+        class: "badge " + (isUp ? "badge-up" : "badge-down"),
+        text: net.disabled ? "disabilitata" : net.running === false ? "down" : "up",
+      });
+
+      const sourceLabel = formatSourceLabel(net.source);
+      const metaParts = [net.ssid ? `SSID: ${net.ssid}` : null, sourceLabel].filter(Boolean);
+
+      const clientList = el("div", { class: "wifi-client-list" });
+      if (!net.clients || !net.clients.length) {
+        clientList.appendChild(
+          el("p", { class: "wifi-empty", text: "Nessun client collegato su questa radio" })
+        );
+      } else {
+        for (const c of net.clients) {
+          const sub = [c.hostname, c.ip_address].filter(Boolean).join(" · ");
+          clientList.appendChild(
+            el("div", { class: "wifi-client-row" }, [
+              el("div", { class: "wifi-client-main" }, [
+                el("span", { class: "wifi-client-mac", text: c.mac_address }),
+                sub ? el("span", { class: "wifi-client-sub", text: sub }) : el("span"),
+              ]),
+              el("span", {
+                class: "wifi-client-signal",
+                text: c.signal_strength ? `${c.signal_strength}` : "",
+              }),
+            ])
+          );
+        }
+      }
+
+      container.appendChild(
+        el("div", { class: "wifi-card" }, [
+          el("div", { class: "wifi-card-head" }, [
+            el("div", { class: "wifi-card-title" }, [
+              el("h3", { text: net.name }),
+              statusBadge,
+            ]),
+          ]),
+          metaParts.length ? el("p", { class: "wifi-card-meta", text: metaParts.join(" · ") }) : el("span"),
+          clientList,
+        ])
+      );
+    }
+    setConnStatus("ok", "connesso");
+  } catch (err) {
+    container.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`;
+  }
+}
+
+document.getElementById("refreshWifi").addEventListener("click", loadWifiNetworks);
 
 // ---------- avvio ----------
 

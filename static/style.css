@@ -1,30 +1,88 @@
 :root {
-  --bg: #faf3ea;
+  --bg: #f4f5f6;
   --bg-panel: #ffffff;
-  --bg-elevated: #fdf0e4;
-  --bg-soft: #fbe7d6;
-  --border: #eddfcd;
-  --border-soft: #f3e8da;
-  --text: #3f322a;
-  --text-muted: #9c8877;
+  --bg-elevated: #f8f9fa;
+  --bg-soft: #eef0f2;
+  --border: #e2e5e9;
+  --border-soft: #edeff2;
+  --text: #1c1f24;
+  --text-muted: #6b7280;
 
-  --accent: #e2622d;       /* terracotta */
-  --accent-hover: #c9531f;
-  --accent-soft: #fce1cf;  /* pesca pastello */
+  --accent: #45505f;        /* grigio-blu neutro */
+  --accent-hover: #333c48;
+  --accent-soft: #e7e9ec;
 
-  --ok: #b8801f;           /* ambra */
-  --ok-soft: #f6e6c4;
-  --warn: #e2a339;         /* senape */
-  --warn-soft: #faead0;
-  --danger: #d95c46;       /* corallo/rosso caldo */
-  --danger-soft: #fbe0d8;
+  --up: #16a34a;             /* verde: rete/interfaccia UP */
+  --up-soft: #dcfce8;
+  --down: #dc2626;           /* rosso: rete/interfaccia DOWN */
+  --down-soft: #fde3e1;
+  --warn: #b7791f;
+  --warn-soft: #f6ead0;
 
-  --amaranth: #9c2b4e;        /* amaranto pieno */
-  --amaranth-light: #c97e97;  /* amaranto chiaro */
+  --brand: #45505f;
+  --brand-soft: #8a94a3;
 
   --radius: 12px;
   --radius-sm: 8px;
-  --shadow: 0 1px 2px rgba(63, 50, 42, 0.04), 0 4px 16px rgba(63, 50, 42, 0.05);
+  --shadow: 0 1px 2px rgba(20, 22, 26, 0.04), 0 4px 16px rgba(20, 22, 26, 0.06);
+}
+
+/* Tema scuro: attivato con data-theme="dark" su <html>, oppure automaticamente
+   se il sistema è in dark mode e l'utente non ha scelto esplicitamente "light". */
+:root[data-theme="dark"] {
+  --bg: #16181c;
+  --bg-panel: #1e2125;
+  --bg-elevated: #24272c;
+  --bg-soft: #2a2d33;
+  --border: #34383f;
+  --border-soft: #2b2e34;
+  --text: #e7e9ec;
+  --text-muted: #9aa1ab;
+
+  --accent: #aab4c2;
+  --accent-hover: #c7cfd9;
+  --accent-soft: #2c3038;
+
+  --up: #34c261;
+  --up-soft: #123822;
+  --down: #f0584a;
+  --down-soft: #3c1a17;
+  --warn: #e8b354;
+  --warn-soft: #3a2f16;
+
+  --brand: #c3cad4;
+  --brand-soft: #838d99;
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #16181c;
+    --bg-panel: #1e2125;
+    --bg-elevated: #24272c;
+    --bg-soft: #2a2d33;
+    --border: #34383f;
+    --border-soft: #2b2e34;
+    --text: #e7e9ec;
+    --text-muted: #9aa1ab;
+
+    --accent: #aab4c2;
+    --accent-hover: #c7cfd9;
+    --accent-soft: #2c3038;
+
+    --up: #34c261;
+    --up-soft: #123822;
+    --down: #f0584a;
+    --down-soft: #3c1a17;
+    --warn: #e8b354;
+    --warn-soft: #3a2f16;
+
+    --brand: #c3cad4;
+    --brand-soft: #838d99;
+
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 4px 16px rgba(0, 0, 0, 0.35);
+  }
 }
 
 * { box-sizing: border-box; }
@@ -36,6 +94,7 @@ body {
   color: var(--text);
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 .topbar {
@@ -58,18 +117,18 @@ body {
 
 .brand-icon {
   display: inline-flex;
-  color: var(--accent);
+  color: var(--brand);
 }
 
 .brand-word { display: inline-flex; align-items: baseline; gap: 1px; }
 .brand-tik {
-  color: var(--amaranth);
+  color: var(--text);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.3px;
 }
 .brand-panel {
-  color: var(--amaranth-light);
+  color: var(--brand-soft);
   font-style: italic;
   font-weight: 500;
 }
@@ -86,9 +145,28 @@ body {
   width: 7px; height: 7px; border-radius: 50%;
   display: inline-block;
 }
-.dot-unknown { background: #d8c7b4; }
-.dot-ok { background: var(--ok); }
-.dot-error { background: var(--danger); }
+.dot-unknown { background: #b7bdc6; }
+.dot-ok { background: var(--up); }
+.dot-error { background: var(--down); }
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 999px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.theme-toggle:hover { border-color: var(--accent); color: var(--text); }
+.theme-toggle svg { width: 16px; height: 16px; }
+.theme-toggle .icon-sun { display: none; }
+:root[data-theme="dark"] .theme-toggle .icon-moon { display: none; }
+:root[data-theme="dark"] .theme-toggle .icon-sun { display: inline-flex; }
 
 .tabs {
   display: flex;
@@ -109,7 +187,7 @@ body {
 }
 .tab:hover { color: var(--text); }
 .tab.active {
-  color: var(--accent);
+  color: var(--text);
   border-bottom-color: var(--accent);
   font-weight: 600;
 }
@@ -135,15 +213,20 @@ main { padding: 24px 28px 48px; max-width: 1080px; margin: 0 auto; }
   border-radius: 999px;
   cursor: pointer;
   font-size: 13px;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 .btn:hover { border-color: var(--accent); background: var(--accent-soft); }
-.btn-primary { background: var(--accent); border-color: var(--accent); color: white; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--bg-panel); }
 .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
-.btn-danger { background: transparent; border-color: var(--danger); color: var(--danger); }
-.btn-danger:hover { background: var(--danger); color: white; }
-.btn-warn { background: transparent; border-color: var(--warn); color: var(--warn); }
-.btn-warn:hover { background: var(--warn); color: white; }
+
+/* Verde = la rete/interfaccia a cui il pulsante si riferisce è UP; rosso = è DOWN. */
+.btn-up { background: transparent; border-color: var(--up); color: var(--up); }
+.btn-up:hover { background: var(--up); color: white; }
+.btn-down { background: transparent; border-color: var(--down); color: var(--down); }
+.btn-down:hover { background: var(--down); color: white; }
+
+.btn-danger { background: transparent; border-color: var(--down); color: var(--down); }
+.btn-danger:hover { background: var(--down); color: white; }
 .btn-ghost { background: transparent; border-color: transparent; }
 .btn-ghost:hover { background: var(--bg-soft); border-color: transparent; }
 .btn-sm { padding: 5px 12px; font-size: 12px; }
@@ -183,9 +266,10 @@ main { padding: 24px 28px 48px; max-width: 1080px; margin: 0 auto; }
   font-weight: 600;
   letter-spacing: 0.2px;
 }
-.badge-ok { background: var(--ok-soft); color: var(--ok); }
-.badge-off { background: var(--border-soft); color: var(--text-muted); }
-.badge-danger { background: var(--danger-soft); color: var(--danger); }
+/* Verde = UP/attivo/libero, rosso = DOWN/disabilitato/bloccato. */
+.badge-up { background: var(--up-soft); color: var(--up); }
+.badge-down { background: var(--down-soft); color: var(--down); }
+.badge-neutral { background: var(--bg-soft); color: var(--text-muted); }
 
 .inline-form {
   display: flex;
@@ -217,7 +301,7 @@ main { padding: 24px 28px 48px; max-width: 1080px; margin: 0 auto; }
   padding: 3px 10px;
   border-radius: 999px;
   background: var(--accent-soft);
-  color: var(--accent-hover);
+  color: var(--text);
   font-size: 12px;
   font-weight: 600;
 }
@@ -271,7 +355,7 @@ main { padding: 24px 28px 48px; max-width: 1080px; margin: 0 auto; }
 
 .login-error {
   margin-top: 14px;
-  color: var(--danger);
+  color: var(--down);
   font-size: 13px;
 }
 
@@ -290,5 +374,85 @@ main { padding: 24px 28px 48px; max-width: 1080px; margin: 0 auto; }
   z-index: 100;
 }
 .toast.hidden { display: none; }
-.toast.toast-error { background: var(--danger); color: white; }
-.toast.toast-ok { background: var(--ok); color: white; }
+.toast.toast-error { background: var(--down); color: white; }
+.toast.toast-ok { background: var(--up); color: white; }
+
+/* ---------- Reti WiFi ---------- */
+
+.wifi-networks {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.wifi-card {
+  background: var(--bg-panel);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 16px 18px;
+}
+
+.wifi-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.wifi-card-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wifi-card-title h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.wifi-card-meta {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 2px 0 12px;
+}
+
+.wifi-client-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+.wifi-client-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 2px;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 13px;
+}
+.wifi-client-row:last-child { border-bottom: none; }
+
+.wifi-client-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.wifi-client-mac { font-weight: 600; }
+.wifi-client-sub { color: var(--text-muted); font-size: 12px; }
+
+.wifi-client-signal {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.wifi-empty {
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 10px 2px 2px;
+}

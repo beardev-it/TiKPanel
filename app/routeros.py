@@ -174,11 +174,17 @@ class RouterOSClient:
     async def list_arp(self) -> list[dict]:
         return await self._request("GET", "/ip/arp")
 
+    # RouterOS non è coerente: un menu assente (pacchetto non installato, hardware senza
+    # wireless, CAPsMAN non configurato...) a volte risponde 404, a volte 400. Trattiamo
+    # entrambi come "funzionalità non disponibile qui" -> lista vuota, mai un errore per
+    # l'utente: il caso "nessun client collegato a nessuna WiFi" deve essere silenzioso.
+    _OPTIONAL_MENU_STATUS_CODES = (400, 404)
+
     async def list_wireless_registrations(self) -> list[dict]:
         try:
             return await self._request("GET", "/interface/wireless/registration-table")
         except RouterOSError as exc:
-            if exc.status_code == 404:
+            if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
                 return []
             raise
 
@@ -186,7 +192,16 @@ class RouterOSClient:
         try:
             return await self._request("GET", "/caps-man/registration-table")
         except RouterOSError as exc:
-            if exc.status_code == 404:
+            if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
+                return []
+            raise
+
+    async def list_wifi_registrations(self) -> list[dict]:
+        """Client registrati sul nuovo pacchetto 'wifi' (RouterOS >= 7.13, sostituisce wireless-cm2)."""
+        try:
+            return await self._request("GET", "/interface/wifi/registration-table")
+        except RouterOSError as exc:
+            if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
                 return []
             raise
 
@@ -194,7 +209,7 @@ class RouterOSClient:
         try:
             return await self._request("GET", "/ip/hotspot/active")
         except RouterOSError as exc:
-            if exc.status_code == 404:
+            if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
                 return []
             raise
 
@@ -204,6 +219,7 @@ class RouterOSClient:
         arp = await self.list_arp()
         wireless = await self.list_wireless_registrations()
         capsman = await self.list_capsman_registrations()
+        wifi = await self.list_wifi_registrations()
         hotspot = await self.list_hotspot_active()
 
         by_mac: dict[str, dict] = {}
@@ -254,6 +270,16 @@ class RouterOSClient:
             entry["connection"] = "wireless (CAPsMAN)"
             entry["capsman_interface"] = reg.get("interface")
             entry["capsman_registration_id"] = reg.get(".id")
+            entry["signal_strength"] = reg.get("signal-strength", entry.get("signal_strength"))
+
+        for reg in wifi:
+            mac = norm(reg.get("mac-address"))
+            if not mac:
+                continue
+            entry = by_mac.setdefault(mac, {"mac_address": mac})
+            entry["connection"] = "wireless (WiFi)"
+            entry["wifi_interface"] = reg.get("interface")
+            entry["wifi_registration_id"] = reg.get(".id")
             entry["signal_strength"] = reg.get("signal-strength", entry.get("signal_strength"))
 
         for act in hotspot:
@@ -378,3 +404,120 @@ class RouterOSClient:
             )
 
         return {"mac_address": mac_address, "actions": actions}
+
+    # ---------- reti WiFi (radio/SSID configurati + client raggruppati) ----------
+
+    async def _list_optional(self, path: str) -> list[dict]:
+        """GET generico che tratta un menu assente (pacchetto non installato / hardware senza
+        wireless) come lista vuota invece che come errore."""
+        try:
+            return await self._request("GET", path)
+        except RouterOSError as exc:
+            if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
+                return []
+            raise
+
+    async def list_wifi_radios(self) -> list[dict]:
+        """Radio/SSID configurati, qualunque sia lo stack WiFi in uso su questo router:
+        nuovo pacchetto 'wifi' (RouterOS >= 7.13), CAPsMAN, o wireless standalone legacy.
+        Router senza hardware WiFi o senza nulla configurato -> lista vuota, nessun errore."""
+        radios: list[dict] = []
+
+        for item in await self._list_optional("/interface/wifi"):
+            radios.append(
+                {
+                    "name": item.get("name"),
+                    "ssid": item.get("configuration.ssid") or item.get("ssid") or item.get("master-interface"),
+                    "disabled": item.get("disabled") == "true",
+                    "running": item.get("running") == "true",
+                    "source": "wifi",
+                }
+            )
+
+        for item in await self._list_optional("/caps-man/interface"):
+            radios.append(
+                {
+                    "name": item.get("name"),
+                    "ssid": item.get("current-ssid") or item.get("configuration.ssid") or item.get("configuration"),
+                    "disabled": item.get("disabled") == "true",
+                    "running": item.get("running") == "true",
+                    "source": "capsman",
+                }
+            )
+
+        # Wireless standalone (non gestito da CAPsMAN): evitiamo di duplicare le interfacce
+        # già viste come "master" di una VAP CAPsMAN.
+        known_names = {r["name"] for r in radios}
+        for item in await self._list_optional("/interface/wireless"):
+            name = item.get("name")
+            if name in known_names:
+                continue
+            radios.append(
+                {
+                    "name": name,
+                    "ssid": item.get("ssid"),
+                    "disabled": item.get("disabled") == "true",
+                    "running": item.get("running") == "true",
+                    "source": "wireless",
+                }
+            )
+
+        return radios
+
+    async def list_wifi_networks(self) -> list[dict]:
+        """Reti WiFi configurate con, per ciascuna, i client attualmente collegati su
+        quella radio (arricchiti con IP/hostname da DHCP dove disponibili)."""
+        radios = await self.list_wifi_radios()
+
+        wireless_regs = await self.list_wireless_registrations()
+        capsman_regs = await self.list_capsman_registrations()
+        wifi_regs = await self.list_wifi_registrations()
+
+        leases = await self.list_dhcp_leases()
+        lease_by_mac: dict[str, dict] = {}
+        for lease in leases:
+            mac = (lease.get("mac-address") or "").upper()
+            if mac:
+                lease_by_mac[mac] = lease
+
+        by_radio: dict[str, list[dict]] = {}
+        for reg in wireless_regs + capsman_regs + wifi_regs:
+            iface = reg.get("interface")
+            if not iface:
+                continue
+            mac = (reg.get("mac-address") or "").upper()
+            lease = lease_by_mac.get(mac, {})
+            by_radio.setdefault(iface, []).append(
+                {
+                    "mac_address": mac,
+                    "ip_address": lease.get("address"),
+                    "hostname": lease.get("host-name"),
+                    "signal_strength": reg.get("signal-strength"),
+                    "uptime": reg.get("uptime"),
+                }
+            )
+
+        networks: list[dict] = []
+        seen_names = set()
+        for radio in radios:
+            name = radio["name"]
+            seen_names.add(name)
+            networks.append({**radio, "clients": by_radio.get(name, [])})
+
+        # Client registrati su un'interfaccia non presente tra i radio "configurati" letti
+        # sopra (edge case, es. interfaccia radio non più elencata ma con client ancora
+        # agganciati): la mostriamo comunque, non far sparire client reali.
+        for iface_name, clients in by_radio.items():
+            if iface_name not in seen_names:
+                networks.append(
+                    {
+                        "name": iface_name,
+                        "ssid": None,
+                        "disabled": False,
+                        "running": True,
+                        "source": "sconosciuta",
+                        "clients": clients,
+                    }
+                )
+
+        return networks

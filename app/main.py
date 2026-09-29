@@ -31,6 +31,7 @@ from .schemas import (
     VlanCreateIn,
     VlanOut,
     VlanUpdateIn,
+    WifiNetworkOut,
 )
 from .security import require_api_key
 
@@ -224,6 +225,23 @@ async def delete_vlan(name: str) -> Response:
 async def list_clients() -> list[ClientOut]:
     raw = await get_client().list_clients()
     return [ClientOut(**item) for item in raw]
+
+
+# ---------------------------------------------------------------------------
+# Reti WiFi (radio/SSID configurati + client raggruppati per radio)
+# ---------------------------------------------------------------------------
+
+
+@app.get(
+    "/wifi-networks",
+    response_model=list[WifiNetworkOut],
+    tags=["wifi"],
+    dependencies=[Depends(require_api_key)],
+    summary="Reti WiFi configurate (qualunque stack: wifi/CAPsMAN/wireless) con i client collegati per radio",
+)
+async def list_wifi_networks() -> list[WifiNetworkOut]:
+    raw = await get_client().list_wifi_networks()
+    return [WifiNetworkOut(**item) for item in raw]
 
 
 @app.post(

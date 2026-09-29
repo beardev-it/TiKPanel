@@ -15,10 +15,13 @@ Cosa si può fare dalla dashboard (o via API):
 - vedere i **client collegati** (DHCP, ARP, WiFi/CAPsMAN, Hotspot)
 - **bloccare** il traffico di un client (address-list + regole firewall + lease DHCP)
 - **forzare la disconnessione** di un client già collegato (kick da WiFi/CAPsMAN/Hotspot, pulizia ARP)
+- vedere le **reti WiFi configurate** (radio/SSID, qualunque stack: pacchetto `wifi`, CAPsMAN o
+  wireless legacy) con i client collegati raggruppati per radio
 
 L'accesso alla dashboard avviene con un vero login: si inseriscono le proprie credenziali
 RouterOS, verificate in tempo reale contro il router stesso — nessuna password viene mai salvata,
-solo una sessione firmata con scadenza.
+solo una sessione firmata con scadenza. La dashboard ha un tema chiaro e uno scuro (icona in alto
+a destra, segue anche le preferenze del sistema di default).
 
 Il container può girare in due modi:
 
@@ -194,6 +197,18 @@ curl -s -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
      -d '{"mac_address":"AA:BB:CC:DD:EE:FF","ip_address":"192.168.88.50"}' \
      http://localhost:8000/clients/kick
 ```
+
+### Reti WiFi
+
+```bash
+# reti/radio configurate (nuovo pacchetto wifi, CAPsMAN o wireless legacy — qualunque sia
+# disponibile sul router) con i client collegati raggruppati per radio
+curl -s -H "X-API-Key: $KEY" http://localhost:8000/wifi-networks
+```
+
+Se il router non ha hardware WiFi o non ha nessuna radio configurata, l'endpoint risponde con
+una lista vuota `[]` invece di un errore: nessun client collegato via WiFi è una condizione
+normale, non un guasto.
 
 ## Note importanti
 
