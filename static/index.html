@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>mikrotik-gate</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <span>mikrotik-gate</span>
+    </div>
+    <div class="conn-status">
+      <span id="connDot" class="dot dot-unknown"></span>
+      <span id="connText">non connesso</span>
+      <button id="btnSettings" class="btn btn-ghost" title="Impostazioni connessione">⚙</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="interfaces">Interfacce</button>
+    <button class="tab" data-tab="vlans">VLAN</button>
+    <button class="tab" data-tab="clients">Client</button>
+  </nav>
+
+  <main>
+    <!-- INTERFACCE -->
+    <section id="tab-interfaces" class="panel active">
+      <div class="panel-head">
+        <h2>Interfacce</h2>
+        <button class="btn" id="refreshInterfaces">Aggiorna</button>
+      </div>
+      <table class="data-table">
+        <thead>
+          <tr><th>Nome</th><th>Tipo</th><th>Stato</th><th>Running</th><th>Commento</th><th></th></tr>
+        </thead>
+        <tbody id="interfacesBody">
+          <tr><td colspan="6" class="empty">Nessun dato — connettiti al servizio</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- VLAN -->
+    <section id="tab-vlans" class="panel">
+      <div class="panel-head">
+        <h2>VLAN</h2>
+        <button class="btn" id="refreshVlans">Aggiorna</button>
+      </div>
+
+      <form id="vlanCreateForm" class="inline-form">
+        <input type="text" name="name" placeholder="nome (es. vlan100-ospiti)" required />
+        <input type="number" name="vlan_id" placeholder="VLAN ID" min="1" max="4094" required />
+        <input type="text" name="interface" placeholder="interfaccia (es. bridge1)" required />
+        <input type="text" name="comment" placeholder="commento (opzionale)" />
+        <button type="submit" class="btn btn-primary">Crea VLAN</button>
+      </form>
+
+      <table class="data-table">
+        <thead>
+          <tr><th>Nome</th><th>VLAN ID</th><th>Interfaccia</th><th>Stato</th><th>Commento</th><th></th></tr>
+        </thead>
+        <tbody id="vlansBody">
+          <tr><td colspan="6" class="empty">Nessun dato — connettiti al servizio</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- CLIENT -->
+    <section id="tab-clients" class="panel">
+      <div class="panel-head">
+        <h2>Client collegati</h2>
+        <button class="btn" id="refreshClients">Aggiorna</button>
+      </div>
+      <table class="data-table">
+        <thead>
+          <tr><th>MAC</th><th>IP</th><th>Hostname</th><th>Connessione</th><th>Bloccato</th><th></th></tr>
+        </thead>
+        <tbody id="clientsBody">
+          <tr><td colspan="6" class="empty">Nessun dato — connettiti al servizio</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <!-- Modale impostazioni connessione -->
+  <div id="settingsModal" class="modal-backdrop hidden">
+    <div class="modal">
+      <h3>Connessione a mikrotik-gate</h3>
+      <p class="muted">Questi valori restano solo nel tuo browser (localStorage).</p>
+      <label>URL base del servizio
+        <input type="text" id="cfgBaseUrl" placeholder="http://172.16.99.2:8000 (vuoto = stessa origine)" />
+      </label>
+      <label>X-API-Key
+        <input type="password" id="cfgApiKey" placeholder="la tua API key" />
+      </label>
+      <div class="modal-actions">
+        <button id="cfgCancel" class="btn btn-ghost">Annulla</button>
+        <button id="cfgSave" class="btn btn-primary">Salva e connetti</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

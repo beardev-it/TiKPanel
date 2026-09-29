@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import Depends, FastAPI, Response, status
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from .config import Settings, get_settings
 from .routeros import RouterOSClient, RouterOSError
@@ -70,7 +72,13 @@ async def health() -> dict:
 
 @app.get("/", tags=["meta"])
 async def root() -> dict:
-    return {"service": "mikrotik-gate", "docs": "/docs"}
+    return {"service": "mikrotik-gate", "docs": "/docs", "ui": "/ui"}
+
+
+# Dashboard web statica (bozza): serve i file in static/ su /ui.
+_STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+if _STATIC_DIR.is_dir():
+    app.mount("/ui", StaticFiles(directory=_STATIC_DIR, html=True), name="ui")
 
 
 # ---------------------------------------------------------------------------
