@@ -114,6 +114,31 @@ class RouterOSClient:
         iface_id = iface[".id"]
         return await self._request("PATCH", f"/interface/{iface_id}", json={"comment": comment})
 
+    async def monitor_interface_traffic(self, name_or_id: str) -> Optional[dict]:
+        """Traffico istantaneo di una qualunque interfaccia RouterOS (fisica, VLAN, radio
+        WiFi/CAPsMAN/wireless: sono tutte interfacce dal punto di vista di RouterOS).
+
+        Usa /interface/monitor-traffic con once=yes: è RouterOS stesso a campionare e
+        calcolare i bit/s, non serve calcolare delta lato nostro tra due letture.
+        """
+        try:
+            result = await self._request(
+                "POST", "/interface/monitor-traffic", json={"interface": name_or_id, "once": "yes"}
+            )
+        except RouterOSError as exc:
+            if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
+                return None
+            raise
+        if not result:
+            return None
+        sample = result[0] if isinstance(result, list) else result
+        return {
+            "rx_bps": int(sample.get("rx-bits-per-second", 0) or 0),
+            "tx_bps": int(sample.get("tx-bits-per-second", 0) or 0),
+            "rx_packets_per_second": int(sample.get("rx-packets-per-second", 0) or 0),
+            "tx_packets_per_second": int(sample.get("tx-packets-per-second", 0) or 0),
+        }
+
     # ---------- VLAN (interface/vlan) ----------
 
     async def list_vlans(self) -> list[dict]:
@@ -168,17 +193,18 @@ class RouterOSClient:
 
     # ---------- client collegati ----------
 
+    # RouterOS non è coerente: un menu assente (pacchetto non installato, hardware senza
+    # wireless, CAPsMAN non configurato, nessun server DHCP...) a volte risponde 404, a
+    # volte 400. Trattiamo entrambi come "funzionalità non disponibile qui" -> lista vuota,
+    # mai un errore per l'utente: il caso "nessun client collegato a nessuna WiFi" (o nessun
+    # server DHCP configurato) deve essere silenzioso, non un 422 in dashboard.
+    _OPTIONAL_MENU_STATUS_CODES = (400, 404)
+
     async def list_dhcp_leases(self) -> list[dict]:
-        return await self._request("GET", "/ip/dhcp-server/lease")
+        return await self._list_optional("/ip/dhcp-server/lease")
 
     async def list_arp(self) -> list[dict]:
-        return await self._request("GET", "/ip/arp")
-
-    # RouterOS non è coerente: un menu assente (pacchetto non installato, hardware senza
-    # wireless, CAPsMAN non configurato...) a volte risponde 404, a volte 400. Trattiamo
-    # entrambi come "funzionalità non disponibile qui" -> lista vuota, mai un errore per
-    # l'utente: il caso "nessun client collegato a nessuna WiFi" deve essere silenzioso.
-    _OPTIONAL_MENU_STATUS_CODES = (400, 404)
+        return await self._list_optional("/ip/arp")
 
     async def list_wireless_registrations(self) -> list[dict]:
         try:
@@ -521,3 +547,43 @@ class RouterOSClient:
                 )
 
         return networks
+
+    # ---------- traffico in tempo reale per client ----------
+
+    async def monitor_client_traffic(self, ip_address: Optional[str], interface: Optional[str]) -> Optional[dict]:
+        """Traffico istantaneo di un singolo client, via /tool/torch filtrato per IP.
+
+        RouterOS non tiene contatori per-client: usiamo torch sull'interfaccia su cui il
+        client è noto (radio WiFi, o interfaccia ARP per un client cablato), sommando i
+        flussi in cui il client compare come sorgente (upload) e come destinazione
+        (download). Richiede sia l'IP che l'interfaccia: se uno dei due non è noto (es.
+        client visto solo via ARP su un'interfaccia bridge sconosciuta) non è possibile
+        stimare il traffico in modo affidabile -> None, non un errore.
+        """
+        if not ip_address or not interface:
+            return None
+
+        async def _torch_sum(direction_field: str, rate_field: str) -> int:
+            try:
+                result = await self._request(
+                    "POST",
+                    "/tool/torch",
+                    json={"interface": interface, direction_field: f"{ip_address}/32", "once": "yes"},
+                )
+            except RouterOSError as exc:
+                if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
+                    return 0
+                raise
+            return sum(int(flow.get(rate_field, 0) or 0) for flow in (result or []))
+
+        # Due chiamate torch separate (RouterOS non ha un filtro "src OR dst" unico):
+        # - client come sorgente (src-address) -> traffico ricevuto dal router su
+        #   quell'interfaccia, cioè quanto il client sta caricando (upload)
+        # - client come destinazione (dst-address) -> traffico trasmesso dal router su
+        #   quell'interfaccia verso il client, cioè quanto sta scaricando (download)
+        # Approssimazione ragionevole, non un contatore esatto per-client: RouterOS non ne
+        # tiene uno nativo senza una coda (queue) dedicata.
+        upload_bps = await _torch_sum("src-address", "rx-bits-per-second")
+        download_bps = await _torch_sum("dst-address", "tx-bits-per-second")
+
+        return {"rx_bps": download_bps, "tx_bps": upload_bps}

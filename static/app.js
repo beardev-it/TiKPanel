@@ -80,6 +80,69 @@ function escapeHtml(str) {
   return d.innerHTML;
 }
 
+function formatBps(bps) {
+  if (!bps || bps <= 0) return "0 bps";
+  const units = ["bps", "kbps", "Mbps", "Gbps"];
+  let value = bps;
+  let i = 0;
+  while (value >= 1000 && i < units.length - 1) {
+    value /= 1000;
+    i++;
+  }
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[i]}`;
+}
+
+function trafficNode(sample) {
+  if (!sample || sample.available === false) {
+    return el("span", { class: "traffic unavailable", text: "n/d" });
+  }
+  return el("span", { class: "traffic" }, [
+    el("span", { class: "tr-down", text: "↓ " + formatBps(sample.rx_bps) }),
+    el("span", { class: "tr-up", text: "↑ " + formatBps(sample.tx_bps) }),
+  ]);
+}
+
+// ---------- polling traffico in tempo reale ----------
+// Ogni "poller" aggiorna periodicamente un placeholder DOM con il traffico corrente. Sono
+// tutti fermati ad ogni cambio tab/refresh per non lasciare richieste periodiche verso
+// interfacce o client che non sono più in vista.
+
+const pollers = new Map();
+const TRAFFIC_POLL_MS = 3000;
+
+function stopAllPolling() {
+  for (const id of pollers.values()) clearInterval(id);
+  pollers.clear();
+}
+
+/** Crea un placeholder che un poller aggiorna sul posto (sempre lo stesso nodo, contenuto
+ * sostituito ad ogni tick) invece di essere rimosso e ricreato dal DOM. */
+function trafficPlaceholder() {
+  return el("span", { class: "traffic unavailable", text: "…" });
+}
+
+function pollTraffic(key, fetchFn, placeholder) {
+  if (pollers.has(key)) return;
+  const tick = async () => {
+    if (!placeholder.isConnected) {
+      // il nodo non è più nel DOM (cambiata tab / ricaricata la lista): ferma il poller
+      clearInterval(pollers.get(key));
+      pollers.delete(key);
+      return;
+    }
+    try {
+      const sample = await fetchFn();
+      const fresh = trafficNode(sample);
+      placeholder.className = fresh.className;
+      placeholder.replaceChildren(...fresh.childNodes);
+    } catch (_) {
+      // silenzioso: un singolo poll fallito non deve riempire di toast la UI
+    }
+  };
+  tick();
+  pollers.set(key, setInterval(tick, TRAFFIC_POLL_MS));
+}
+
 // ---------- chiamate API ----------
 
 async function api(path, options = {}) {
@@ -192,22 +255,23 @@ document.querySelectorAll(".tab").forEach((tab) => {
     document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
     tab.classList.add("active");
     document.getElementById("tab-" + tab.dataset.tab).classList.add("active");
+    stopAllPolling();
     if (tab.dataset.tab === "interfaces") loadInterfaces();
     if (tab.dataset.tab === "vlans") loadVlans();
-    if (tab.dataset.tab === "clients") loadClients();
-    if (tab.dataset.tab === "wifi") loadWifiNetworks();
+    if (tab.dataset.tab === "wifi") loadClientsAndNetworks();
   });
 });
 
 // ---------- interfacce ----------
 
 async function loadInterfaces() {
+  stopAllPolling();
   const body = document.getElementById("interfacesBody");
-  body.innerHTML = `<tr><td colspan="6" class="empty">Caricamento…</td></tr>`;
+  body.innerHTML = `<tr><td colspan="7" class="empty">Caricamento…</td></tr>`;
   try {
     const data = await api("/interfaces");
     if (!data.length) {
-      body.innerHTML = `<tr><td colspan="6" class="empty">Nessuna interfaccia trovata</td></tr>`;
+      body.innerHTML = `<tr><td colspan="7" class="empty">Nessuna interfaccia trovata</td></tr>`;
       return;
     }
     body.innerHTML = "";
@@ -226,29 +290,31 @@ async function loadInterfaces() {
         text: iface.disabled ? "Abilita" : "Disabilita",
         onclick: () => toggleInterface(iface.name, !iface.disabled),
       });
+      const trafficCell = trafficPlaceholder();
       body.appendChild(
         el("tr", {}, [
           el("td", { text: iface.name }),
           el("td", { text: iface.type || "—" }),
           el("td", {}, [statusBadge]),
           el("td", {}, [runningBadge]),
+          el("td", {}, [trafficCell]),
           el("td", { text: iface.comment || "" }),
           el("td", {}, [toggleBtn]),
         ])
       );
+      if (!iface.disabled) {
+        pollTraffic(`iface:${iface.name}`, () => api(`/interfaces/${encodeURIComponent(iface.name)}/traffic`), trafficCell);
+      }
     }
     setConnStatus("ok", "connesso");
   } catch (err) {
-    body.innerHTML = `<tr><td colspan="6" class="empty">${escapeHtml(err.message)}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(err.message)}</td></tr>`;
   }
 }
 
 async function toggleInterface(name, disabled) {
   try {
-    await api(`/interfaces/${encodeURIComponent(name)}/state`, {
-      method: "PUT",
-      body: JSON.stringify({ disabled }),
-    });
+    await setInterfaceDisabled(name, disabled);
     toast(`Interfaccia ${name} ${disabled ? "disabilitata" : "abilitata"}`, "ok");
     loadInterfaces();
   } catch (err) {
@@ -256,17 +322,25 @@ async function toggleInterface(name, disabled) {
   }
 }
 
+async function setInterfaceDisabled(name, disabled) {
+  return api(`/interfaces/${encodeURIComponent(name)}/state`, {
+    method: "PUT",
+    body: JSON.stringify({ disabled }),
+  });
+}
+
 document.getElementById("refreshInterfaces").addEventListener("click", loadInterfaces);
 
 // ---------- VLAN ----------
 
 async function loadVlans() {
+  stopAllPolling();
   const body = document.getElementById("vlansBody");
-  body.innerHTML = `<tr><td colspan="6" class="empty">Caricamento…</td></tr>`;
+  body.innerHTML = `<tr><td colspan="7" class="empty">Caricamento…</td></tr>`;
   try {
     const data = await api("/vlans");
     if (!data.length) {
-      body.innerHTML = `<tr><td colspan="6" class="empty">Nessuna VLAN configurata</td></tr>`;
+      body.innerHTML = `<tr><td colspan="7" class="empty">Nessuna VLAN configurata</td></tr>`;
       return;
     }
     body.innerHTML = "";
@@ -281,20 +355,25 @@ async function loadVlans() {
         text: "Elimina",
         onclick: () => deleteVlan(vlan.name),
       });
+      const trafficCell = trafficPlaceholder();
       body.appendChild(
         el("tr", {}, [
           el("td", { text: vlan.name }),
           el("td", { text: String(vlan.vlan_id ?? "—") }),
           el("td", { text: vlan.interface || "—" }),
           el("td", {}, [statusBadge]),
+          el("td", {}, [trafficCell]),
           el("td", { text: vlan.comment || "" }),
           el("td", {}, [deleteBtn]),
         ])
       );
+      if (isUp) {
+        pollTraffic(`vlan:${vlan.name}`, () => api(`/interfaces/${encodeURIComponent(vlan.name)}/traffic`), trafficCell);
+      }
     }
     setConnStatus("ok", "connesso");
   } catch (err) {
-    body.innerHTML = `<tr><td colspan="6" class="empty">${escapeHtml(err.message)}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(err.message)}</td></tr>`;
   }
 }
 
@@ -330,49 +409,21 @@ document.getElementById("vlanCreateForm").addEventListener("submit", async (e) =
 
 document.getElementById("refreshVlans").addEventListener("click", loadVlans);
 
-// ---------- client ----------
+// ---------- client & reti WiFi (vista unificata) ----------
 
-async function loadClients() {
-  const body = document.getElementById("clientsBody");
-  body.innerHTML = `<tr><td colspan="6" class="empty">Caricamento…</td></tr>`;
-  try {
-    const data = await api("/clients");
-    if (!data.length) {
-      body.innerHTML = `<tr><td colspan="6" class="empty">Nessun client rilevato</td></tr>`;
-      return;
-    }
-    body.innerHTML = "";
-    for (const client of data) {
-      const blockedBadge = el("span", {
-        class: "badge " + (client.blocked ? "badge-down" : "badge-up"),
-        text: client.blocked ? "bloccato" : "libero",
-      });
-      const blockBtn = el("button", {
-        class: "btn btn-sm " + (client.blocked ? "btn-down" : "btn-up"),
-        text: client.blocked ? "Sblocca" : "Blocca",
-        onclick: () => (client.blocked ? unblockClient(client) : blockClient(client)),
-      });
-      const disconnectBtn = el("button", {
-        class: "btn btn-sm btn-danger",
-        text: "Disconnetti",
-        onclick: () => disconnectClient(client),
-      });
-      body.appendChild(
-        el("tr", {}, [
-          el("td", { text: client.mac_address }),
-          el("td", { text: client.ip_address || "—" }),
-          el("td", { text: client.hostname || "—" }),
-          el("td", { text: client.connection || "cablato" }),
-          el("td", {}, [blockedBadge]),
-          el("td", {}, [blockBtn, disconnectBtn]),
-        ])
-      );
-    }
-    setConnStatus("ok", "connesso");
-  } catch (err) {
-    body.innerHTML = `<tr><td colspan="6" class="empty">${escapeHtml(err.message)}</td></tr>`;
-  }
+function formatSourceLabel(source) {
+  return { wifi: "WiFi", capsman: "CAPsMAN", wireless: "Wireless", sconosciuta: "" }[source] || "";
 }
+
+// Selezioni correnti (checkbox) per le azioni di gruppo, e cache dell'ultimo caricamento
+// per poter risalire da un MAC/nome rete ai dati completi quando si esegue un'azione.
+const selection = {
+  networks: new Set(), // nomi interfaccia radio selezionati
+  clients: new Set(), // MAC selezionati
+};
+let lastClientsByMac = new Map();
+let lastNetworksByName = new Map();
+let lastWiredMacs = new Set();
 
 async function blockClient(client) {
   try {
@@ -381,7 +432,7 @@ async function blockClient(client) {
       body: JSON.stringify({ mac_address: client.mac_address, ip_address: client.ip_address }),
     });
     toast(`Client ${client.mac_address} bloccato`, "ok");
-    loadClients();
+    loadClientsAndNetworks();
   } catch (err) {
     toast(err.message, "error");
   }
@@ -394,7 +445,7 @@ async function unblockClient(client) {
       body: JSON.stringify({ mac_address: client.mac_address, ip_address: client.ip_address }),
     });
     toast(`Client ${client.mac_address} sbloccato`, "ok");
-    loadClients();
+    loadClientsAndNetworks();
   } catch (err) {
     toast(err.message, "error");
   }
@@ -408,84 +459,311 @@ async function disconnectClient(client) {
       body: JSON.stringify({ mac_address: client.mac_address }),
     });
     toast((res.actions || []).join("; ") || "Disconnessione richiesta", "ok");
-    loadClients();
+    loadClientsAndNetworks();
   } catch (err) {
     toast(err.message, "error");
   }
 }
 
-document.getElementById("refreshClients").addEventListener("click", loadClients);
-
-// ---------- reti WiFi ----------
-
-function formatSourceLabel(source) {
-  return { wifi: "WiFi", capsman: "CAPsMAN", wireless: "Wireless", sconosciuta: "" }[source] || "";
+function clientTrafficKey(client) {
+  return `client:${client.mac_address}`;
 }
 
-async function loadWifiNetworks() {
-  const container = document.getElementById("wifiNetworks");
-  container.innerHTML = `<p class="empty">Caricamento…</p>`;
+function clientTrafficFetcher(client) {
+  const iface = client.wifi_interface || client.capsman_interface || client.wireless_interface || client.arp_interface;
+  return () =>
+    api("/clients/traffic", {
+      method: "POST",
+      body: JSON.stringify({ ip_address: client.ip_address, interface: iface }),
+    });
+}
+
+function buildClientCheckbox(mac) {
+  const checkbox = el("input", { type: "checkbox" });
+  checkbox.checked = selection.clients.has(mac);
+  checkbox.addEventListener("change", () => {
+    if (checkbox.checked) selection.clients.add(mac);
+    else selection.clients.delete(mac);
+    updateClientBulkBar();
+  });
+  return checkbox;
+}
+
+function buildWifiClientRow(client) {
+  lastClientsByMac.set(client.mac_address, client);
+  const sub = [client.hostname, client.ip_address].filter(Boolean).join(" · ");
+  const trafficCell = trafficPlaceholder();
+  pollTraffic(clientTrafficKey(client), clientTrafficFetcher(client), trafficCell);
+
+  const blockBtn = el("button", {
+    class: "btn btn-sm " + (client.blocked ? "btn-down" : "btn-up"),
+    text: client.blocked ? "Sblocca" : "Blocca",
+    onclick: () => (client.blocked ? unblockClient(client) : blockClient(client)),
+  });
+  const disconnectBtn = el("button", {
+    class: "btn btn-sm btn-danger",
+    text: "Disconnetti",
+    onclick: () => disconnectClient(client),
+  });
+
+  return el("div", { class: "wifi-client-row" }, [
+    el("div", { class: "wifi-client-select" }, [
+      buildClientCheckbox(client.mac_address),
+      el("div", { class: "wifi-client-main" }, [
+        el("span", { class: "wifi-client-mac", text: client.mac_address }),
+        sub ? el("span", { class: "wifi-client-sub", text: sub }) : el("span"),
+      ]),
+    ]),
+    el("div", { class: "wifi-client-actions" }, [trafficCell, blockBtn, disconnectBtn]),
+  ]);
+}
+
+function updateNetworkBulkBar() {
+  const bar = document.getElementById("networkBulkBar");
+  const count = selection.networks.size;
+  document.getElementById("networkBulkCount").textContent =
+    count === 1 ? "1 rete selezionata" : `${count} reti selezionate`;
+  bar.classList.toggle("hidden", count === 0);
+}
+
+function updateClientBulkBar() {
+  const bar = document.getElementById("clientBulkBar");
+  const count = selection.clients.size;
+  document.getElementById("clientBulkCount").textContent =
+    count === 1 ? "1 client selezionato" : `${count} client selezionati`;
+  bar.classList.toggle("hidden", count === 0);
+}
+
+async function loadClientsAndNetworks() {
+  stopAllPolling();
+  selection.networks.clear();
+  selection.clients.clear();
+  updateNetworkBulkBar();
+  updateClientBulkBar();
+
+  const networksContainer = document.getElementById("wifiNetworks");
+  const wiredBody = document.getElementById("wiredClientsBody");
+  networksContainer.innerHTML = `<p class="empty">Caricamento…</p>`;
+  wiredBody.innerHTML = `<tr><td colspan="7" class="empty">Caricamento…</td></tr>`;
+
   try {
-    const networks = await api("/wifi-networks");
-    if (!networks.length) {
-      container.innerHTML = `<p class="empty">Nessuna rete WiFi configurata su questo router</p>`;
-      setConnStatus("ok", "connesso");
-      return;
-    }
-    container.innerHTML = "";
-    for (const net of networks) {
-      const isUp = !net.disabled && net.running !== false;
-      const statusBadge = el("span", {
-        class: "badge " + (isUp ? "badge-up" : "badge-down"),
-        text: net.disabled ? "disabilitata" : net.running === false ? "down" : "up",
-      });
+    const [networks, clients] = await Promise.all([api("/wifi-networks"), api("/clients")]);
+    lastNetworksByName = new Map(networks.map((n) => [n.name, n]));
+    lastClientsByMac = new Map();
 
-      const sourceLabel = formatSourceLabel(net.source);
-      const metaParts = [net.ssid ? `SSID: ${net.ssid}` : null, sourceLabel].filter(Boolean);
+    const wifiMacs = new Set();
+    for (const net of networks) for (const c of net.clients || []) wifiMacs.add(c.mac_address);
 
-      const clientList = el("div", { class: "wifi-client-list" });
-      if (!net.clients || !net.clients.length) {
-        clientList.appendChild(
-          el("p", { class: "wifi-empty", text: "Nessun client collegato su questa radio" })
-        );
-      } else {
-        for (const c of net.clients) {
-          const sub = [c.hostname, c.ip_address].filter(Boolean).join(" · ");
-          clientList.appendChild(
-            el("div", { class: "wifi-client-row" }, [
-              el("div", { class: "wifi-client-main" }, [
-                el("span", { class: "wifi-client-mac", text: c.mac_address }),
-                sub ? el("span", { class: "wifi-client-sub", text: sub }) : el("span"),
-              ]),
-              el("span", {
-                class: "wifi-client-signal",
-                text: c.signal_strength ? `${c.signal_strength}` : "",
-              }),
-            ])
-          );
-        }
-      }
-
-      container.appendChild(
-        el("div", { class: "wifi-card" }, [
-          el("div", { class: "wifi-card-head" }, [
-            el("div", { class: "wifi-card-title" }, [
-              el("h3", { text: net.name }),
-              statusBadge,
-            ]),
-          ]),
-          metaParts.length ? el("p", { class: "wifi-card-meta", text: metaParts.join(" · ") }) : el("span"),
-          clientList,
-        ])
-      );
-    }
+    renderWifiNetworks(networks);
+    renderWiredClients(clients.filter((c) => !wifiMacs.has(c.mac_address)));
     setConnStatus("ok", "connesso");
   } catch (err) {
-    container.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`;
+    networksContainer.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`;
+    wiredBody.innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(err.message)}</td></tr>`;
   }
 }
 
-document.getElementById("refreshWifi").addEventListener("click", loadWifiNetworks);
+function renderWifiNetworks(networks) {
+  const container = document.getElementById("wifiNetworks");
+  if (!networks.length) {
+    container.innerHTML = `<p class="empty">Nessuna rete WiFi configurata su questo router</p>`;
+    return;
+  }
+  container.innerHTML = "";
+  for (const net of networks) {
+    const isUp = !net.disabled && net.running !== false;
+    const statusBadge = el("span", {
+      class: "badge " + (isUp ? "badge-up" : "badge-down"),
+      text: net.disabled ? "disabilitata" : net.running === false ? "down" : "up",
+    });
+
+    const sourceLabel = formatSourceLabel(net.source);
+    const metaParts = [net.ssid ? `SSID: ${net.ssid}` : null, sourceLabel].filter(Boolean);
+
+    const netCheckbox = el("input", { type: "checkbox" });
+    netCheckbox.checked = selection.networks.has(net.name);
+    netCheckbox.addEventListener("change", () => {
+      if (netCheckbox.checked) selection.networks.add(net.name);
+      else selection.networks.delete(net.name);
+      updateNetworkBulkBar();
+    });
+
+    const toggleBtn = el("button", {
+      class: "btn btn-sm " + (isUp ? "btn-up" : "btn-down"),
+      text: net.disabled ? "Attiva" : "Disattiva",
+      onclick: () => toggleNetwork(net.name, !net.disabled),
+    });
+
+    const trafficCell = trafficPlaceholder();
+    if (net.source !== "sconosciuta") {
+      pollTraffic(`net:${net.name}`, () => api(`/interfaces/${encodeURIComponent(net.name)}/traffic`), trafficCell);
+    }
+
+    const clientList = el("div", { class: "wifi-client-list" });
+    if (!net.clients || !net.clients.length) {
+      clientList.appendChild(el("p", { class: "wifi-empty", text: "Nessun client collegato su questa radio" }));
+    } else {
+      for (const c of net.clients) {
+        clientList.appendChild(buildWifiClientRow(c));
+      }
+    }
+
+    container.appendChild(
+      el("div", { class: "wifi-card" }, [
+        el("div", { class: "wifi-card-head" }, [
+          el("div", { class: "wifi-card-title" }, [
+            el("div", { class: "wifi-card-check" }, [netCheckbox, el("h3", { text: net.name })]),
+            statusBadge,
+          ]),
+          el("div", { class: "wifi-client-actions" }, [trafficCell, toggleBtn]),
+        ]),
+        metaParts.length ? el("p", { class: "wifi-card-meta", text: metaParts.join(" · ") }) : el("span"),
+        clientList,
+      ])
+    );
+  }
+}
+
+function renderWiredClients(clients) {
+  const body = document.getElementById("wiredClientsBody");
+  const selectAll = document.getElementById("wiredSelectAll");
+  lastWiredMacs = new Set(clients.map((c) => c.mac_address));
+  selectAll.checked = lastWiredMacs.size > 0 && [...lastWiredMacs].every((mac) => selection.clients.has(mac));
+  if (!clients.length) {
+    body.innerHTML = `<tr><td colspan="7" class="empty">Nessun client cablato rilevato</td></tr>`;
+    return;
+  }
+  body.innerHTML = "";
+  for (const client of clients) {
+    lastClientsByMac.set(client.mac_address, client);
+    const blockedBadge = el("span", {
+      class: "badge " + (client.blocked ? "badge-down" : "badge-up"),
+      text: client.blocked ? "bloccato" : "libero",
+    });
+    const blockBtn = el("button", {
+      class: "btn btn-sm " + (client.blocked ? "btn-down" : "btn-up"),
+      text: client.blocked ? "Sblocca" : "Blocca",
+      onclick: () => (client.blocked ? unblockClient(client) : blockClient(client)),
+    });
+    const disconnectBtn = el("button", {
+      class: "btn btn-sm btn-danger",
+      text: "Disconnetti",
+      onclick: () => disconnectClient(client),
+    });
+    const trafficCell = trafficPlaceholder();
+    pollTraffic(clientTrafficKey(client), clientTrafficFetcher(client), trafficCell);
+
+    body.appendChild(
+      el("tr", {}, [
+        el("td", {}, [buildClientCheckbox(client.mac_address)]),
+        el("td", { text: client.mac_address }),
+        el("td", { text: client.ip_address || "—" }),
+        el("td", { text: client.hostname || "—" }),
+        el("td", {}, [blockedBadge]),
+        el("td", {}, [trafficCell]),
+        el("td", {}, [blockBtn, disconnectBtn]),
+      ])
+    );
+  }
+}
+
+document.getElementById("wiredSelectAll").addEventListener("change", (e) => {
+  for (const mac of lastWiredMacs) {
+    if (e.target.checked) selection.clients.add(mac);
+    else selection.clients.delete(mac);
+  }
+  updateClientBulkBar();
+  // ri-renderizzare tutta la vista è più semplice che sincronizzare ogni checkbox a mano
+  loadClientsAndNetworksKeepingSelection();
+});
+
+async function loadClientsAndNetworksKeepingSelection() {
+  // variante "leggera": ridisegna senza azzerare le selezioni correnti (usata dopo select-all)
+  stopAllPolling();
+  const networksContainer = document.getElementById("wifiNetworks");
+  const wiredBody = document.getElementById("wiredClientsBody");
+  try {
+    const [networks, clients] = await Promise.all([api("/wifi-networks"), api("/clients")]);
+    const wifiMacs = new Set();
+    for (const net of networks) for (const c of net.clients || []) wifiMacs.add(c.mac_address);
+    renderWifiNetworks(networks);
+    renderWiredClients(clients.filter((c) => !wifiMacs.has(c.mac_address)));
+  } catch (err) {
+    networksContainer.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`;
+    wiredBody.innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+async function toggleNetwork(name, disabled) {
+  try {
+    await setInterfaceDisabled(name, disabled);
+    toast(`Rete ${name} ${disabled ? "disattivata" : "attivata"}`, "ok");
+    loadClientsAndNetworks();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+document.getElementById("bulkEnableNetworks").addEventListener("click", () => bulkSetNetworks(false));
+document.getElementById("bulkDisableNetworks").addEventListener("click", () => bulkSetNetworks(true));
+
+async function bulkSetNetworks(disabled) {
+  const names = [...selection.networks];
+  if (!names.length) return;
+  const results = await Promise.allSettled(names.map((name) => setInterfaceDisabled(name, disabled)));
+  const failed = results.filter((r) => r.status === "rejected").length;
+  toast(
+    failed
+      ? `${names.length - failed}/${names.length} reti aggiornate, ${failed} fallite`
+      : `${names.length} rete/i ${disabled ? "disattivate" : "attivate"}`,
+    failed ? "error" : "ok"
+  );
+  loadClientsAndNetworks();
+}
+
+document.getElementById("bulkBlockClients").addEventListener("click", () => bulkClientAction("block"));
+document.getElementById("bulkUnblockClients").addEventListener("click", () => bulkClientAction("unblock"));
+document.getElementById("bulkDisconnectClients").addEventListener("click", () => bulkClientAction("disconnect"));
+
+async function bulkClientAction(action) {
+  const macs = [...selection.clients];
+  if (!macs.length) return;
+  if (action === "disconnect" && !confirm(`Forzare la disconnessione di ${macs.length} client?`)) return;
+
+  const results = await Promise.allSettled(
+    macs.map((mac) => {
+      const client = lastClientsByMac.get(mac) || { mac_address: mac };
+      if (action === "block") return blockClientRaw(client);
+      if (action === "unblock") return unblockClientRaw(client);
+      return disconnectClientRaw(client);
+    })
+  );
+  const failed = results.filter((r) => r.status === "rejected").length;
+  const label = { block: "bloccati", unblock: "sbloccati", disconnect: "disconnessi" }[action];
+  toast(
+    failed ? `${macs.length - failed}/${macs.length} client ${label}, ${failed} falliti` : `${macs.length} client ${label}`,
+    failed ? "error" : "ok"
+  );
+  loadClientsAndNetworks();
+}
+
+function blockClientRaw(client) {
+  return api("/clients/block", {
+    method: "POST",
+    body: JSON.stringify({ mac_address: client.mac_address, ip_address: client.ip_address }),
+  });
+}
+function unblockClientRaw(client) {
+  return api("/clients/unblock", {
+    method: "POST",
+    body: JSON.stringify({ mac_address: client.mac_address, ip_address: client.ip_address }),
+  });
+}
+function disconnectClientRaw(client) {
+  return api("/clients/disconnect", { method: "POST", body: JSON.stringify({ mac_address: client.mac_address }) });
+}
+
+document.getElementById("refreshWifi").addEventListener("click", loadClientsAndNetworks);
 
 // ---------- avvio ----------
 

@@ -119,6 +119,19 @@ class WifiNetworkOut(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class TrafficOut(BaseModel):
+    rx_bps: int = Field(0, description="Bit al secondo in ricezione/download")
+    tx_bps: int = Field(0, description="Bit al secondo in trasmissione/upload")
+    available: bool = Field(True, description="False se il traffico non è stimabile per questo elemento")
+
+
+class ClientTrafficIn(BaseModel):
+    ip_address: Optional[str] = Field(default=None, description="IP del client (richiesto per stimare il traffico)")
+    interface: Optional[str] = Field(
+        default=None, description="Interfaccia su cui è noto il client (radio WiFi o interfaccia ARP)"
+    )
+
+
 class LoginIn(BaseModel):
     username: str = Field(..., description="Nome utente RouterOS")
     password: str = Field(..., description="Password RouterOS (mai persistita, solo verificata)")

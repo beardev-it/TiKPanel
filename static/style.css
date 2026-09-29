@@ -456,3 +456,70 @@ main { padding: 24px 28px 48px; max-width: 1080px; margin: 0 auto; }
   font-size: 13px;
   padding: 10px 2px 2px;
 }
+
+.wifi-card-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wifi-client-select {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wifi-client-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ---------- azioni di gruppo (checkbox multipla) ---------- */
+
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+
+.bulk-count {
+  color: var(--text-muted);
+  margin-right: auto;
+}
+
+.col-check { width: 36px; }
+
+.wired-clients-head {
+  margin: 22px 0 10px;
+}
+.wired-clients-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-size: 12px;
+}
+
+/* ---------- traffico in tempo reale ---------- */
+
+.traffic {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.traffic .tr-down { color: var(--up); }
+.traffic .tr-up { color: var(--text-muted); }
+.traffic.unavailable { color: var(--text-muted); opacity: 0.6; }

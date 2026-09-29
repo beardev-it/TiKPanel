@@ -24,10 +24,12 @@ from .schemas import (
     ClientBlockIn,
     ClientDisconnectIn,
     ClientOut,
+    ClientTrafficIn,
     InterfaceOut,
     InterfaceStateIn,
     LoginIn,
     LoginOut,
+    TrafficOut,
     VlanCreateIn,
     VlanOut,
     VlanUpdateIn,
@@ -160,6 +162,20 @@ async def set_interface_state(name: str, body: InterfaceStateIn) -> InterfaceOut
     return InterfaceOut.from_raw(raw)
 
 
+@app.get(
+    "/interfaces/{name}/traffic",
+    response_model=TrafficOut,
+    tags=["interfacce"],
+    dependencies=[Depends(require_api_key)],
+    summary="Traffico istantaneo (bit/s) di un'interfaccia: fisica, VLAN o radio WiFi",
+)
+async def get_interface_traffic(name: str) -> TrafficOut:
+    sample = await get_client().monitor_interface_traffic(name)
+    if sample is None:
+        return TrafficOut(rx_bps=0, tx_bps=0, available=False)
+    return TrafficOut(rx_bps=sample["rx_bps"], tx_bps=sample["tx_bps"], available=True)
+
+
 # ---------------------------------------------------------------------------
 # VLAN
 # ---------------------------------------------------------------------------
@@ -225,6 +241,20 @@ async def delete_vlan(name: str) -> Response:
 async def list_clients() -> list[ClientOut]:
     raw = await get_client().list_clients()
     return [ClientOut(**item) for item in raw]
+
+
+@app.post(
+    "/clients/traffic",
+    response_model=TrafficOut,
+    tags=["client"],
+    dependencies=[Depends(require_api_key)],
+    summary="Traffico istantaneo (bit/s) stimato per un client, via torch su IP + interfaccia noti",
+)
+async def get_client_traffic(body: ClientTrafficIn) -> TrafficOut:
+    sample = await get_client().monitor_client_traffic(body.ip_address, body.interface)
+    if sample is None:
+        return TrafficOut(rx_bps=0, tx_bps=0, available=False)
+    return TrafficOut(rx_bps=sample["rx_bps"], tx_bps=sample["tx_bps"], available=True)
 
 
 # ---------------------------------------------------------------------------

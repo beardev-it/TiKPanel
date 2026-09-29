@@ -16,7 +16,10 @@ Cosa si può fare dalla dashboard (o via API):
 - **bloccare** il traffico di un client (address-list + regole firewall + lease DHCP)
 - **forzare la disconnessione** di un client già collegato (kick da WiFi/CAPsMAN/Hotspot, pulizia ARP)
 - vedere le **reti WiFi configurate** (radio/SSID, qualunque stack: pacchetto `wifi`, CAPsMAN o
-  wireless legacy) con i client collegati raggruppati per radio
+  wireless legacy) con i client collegati raggruppati per radio, **attivabili/disattivabili**
+  e selezionabili in blocco (checkbox) per azioni di gruppo sui client (blocca/sblocca/disconnetti)
+- vedere il **traffico in tempo reale** (bit/s in download e upload) di ogni interfaccia, VLAN,
+  radio WiFi e client collegato
 
 L'accesso alla dashboard avviene con un vero login: si inseriscono le proprie credenziali
 RouterOS, verificate in tempo reale contro il router stesso — nessuna password viene mai salvata,
@@ -149,6 +152,10 @@ curl -s -X PUT -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
 curl -s -X PUT -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
      -d '{"disabled": false}' \
      http://localhost:8000/interfaces/ether3/state
+
+# traffico istantaneo (bit/s) — funziona su qualunque interfaccia RouterOS: fisica, VLAN
+# o radio WiFi/CAPsMAN/wireless, dato che per RouterOS sono tutte "interface"
+curl -s -H "X-API-Key: $KEY" http://localhost:8000/interfaces/ether3/traffic
 ```
 
 ### VLAN
@@ -196,7 +203,17 @@ curl -s -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
 curl -s -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
      -d '{"mac_address":"AA:BB:CC:DD:EE:FF","ip_address":"192.168.88.50"}' \
      http://localhost:8000/clients/kick
+
+# traffico istantaneo (bit/s) stimato per un client (via torch, richiede IP + interfaccia
+# su cui il client è noto — la dashboard li passa automaticamente da /clients o /wifi-networks)
+curl -s -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+     -d '{"ip_address":"192.168.88.50","interface":"wlan1"}' \
+     http://localhost:8000/clients/traffic
 ```
+
+> Il traffico per client è una stima best-effort (RouterOS non tiene un contatore nativo
+> per singolo client senza una coda dedicata): se IP o interfaccia non sono noti risponde
+> `{"available": false}` invece di un errore.
 
 ### Reti WiFi
 

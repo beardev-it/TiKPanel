@@ -77,8 +77,7 @@
   <nav class="tabs">
     <button class="tab active" data-tab="interfaces">Interfacce</button>
     <button class="tab" data-tab="vlans">VLAN</button>
-    <button class="tab" data-tab="clients">Client</button>
-    <button class="tab" data-tab="wifi">Reti WiFi</button>
+    <button class="tab" data-tab="wifi">Client &amp; Reti WiFi</button>
   </nav>
 
   <main>
@@ -90,10 +89,10 @@
       </div>
       <table class="data-table">
         <thead>
-          <tr><th>Nome</th><th>Tipo</th><th>Stato</th><th>Running</th><th>Commento</th><th></th></tr>
+          <tr><th>Nome</th><th>Tipo</th><th>Stato</th><th>Running</th><th>Traffico</th><th>Commento</th><th></th></tr>
         </thead>
         <tbody id="interfacesBody">
-          <tr><td colspan="6" class="empty">Nessun dato — connettiti al servizio</td></tr>
+          <tr><td colspan="7" class="empty">Nessun dato — connettiti al servizio</td></tr>
         </tbody>
       </table>
     </section>
@@ -115,39 +114,52 @@
 
       <table class="data-table">
         <thead>
-          <tr><th>Nome</th><th>VLAN ID</th><th>Interfaccia</th><th>Stato</th><th>Commento</th><th></th></tr>
+          <tr><th>Nome</th><th>VLAN ID</th><th>Interfaccia</th><th>Stato</th><th>Traffico</th><th>Commento</th><th></th></tr>
         </thead>
         <tbody id="vlansBody">
-          <tr><td colspan="6" class="empty">Nessun dato — connettiti al servizio</td></tr>
+          <tr><td colspan="7" class="empty">Nessun dato — connettiti al servizio</td></tr>
         </tbody>
       </table>
     </section>
 
-    <!-- CLIENT -->
-    <section id="tab-clients" class="panel">
-      <div class="panel-head">
-        <h2>Client collegati</h2>
-        <button class="btn" id="refreshClients">Aggiorna</button>
-      </div>
-      <table class="data-table">
-        <thead>
-          <tr><th>MAC</th><th>IP</th><th>Hostname</th><th>Connessione</th><th>Bloccato</th><th></th></tr>
-        </thead>
-        <tbody id="clientsBody">
-          <tr><td colspan="6" class="empty">Nessun dato — connettiti al servizio</td></tr>
-        </tbody>
-      </table>
-    </section>
-
-    <!-- RETI WIFI -->
+    <!-- CLIENT & RETI WIFI -->
     <section id="tab-wifi" class="panel">
       <div class="panel-head">
-        <h2>Reti WiFi</h2>
+        <h2>Client &amp; Reti WiFi</h2>
         <button class="btn" id="refreshWifi">Aggiorna</button>
       </div>
+
+      <div id="networkBulkBar" class="bulk-bar hidden">
+        <span id="networkBulkCount" class="bulk-count"></span>
+        <button id="bulkEnableNetworks" class="btn btn-sm btn-up" type="button">Attiva selezionate</button>
+        <button id="bulkDisableNetworks" class="btn btn-sm btn-down" type="button">Disattiva selezionate</button>
+      </div>
+
       <div id="wifiNetworks" class="wifi-networks">
         <p class="empty">Nessun dato — connettiti al servizio</p>
       </div>
+
+      <div id="clientBulkBar" class="bulk-bar hidden">
+        <span id="clientBulkCount" class="bulk-count"></span>
+        <button id="bulkBlockClients" class="btn btn-sm btn-down" type="button">Blocca selezionati</button>
+        <button id="bulkUnblockClients" class="btn btn-sm btn-up" type="button">Sblocca selezionati</button>
+        <button id="bulkDisconnectClients" class="btn btn-sm btn-danger" type="button">Disconnetti selezionati</button>
+      </div>
+
+      <div class="wired-clients-head">
+        <h3>Client cablati</h3>
+      </div>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th class="col-check"><input type="checkbox" id="wiredSelectAll" title="Seleziona tutti" /></th>
+            <th>MAC</th><th>IP</th><th>Hostname</th><th>Bloccato</th><th>Traffico</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="wiredClientsBody">
+          <tr><td colspan="7" class="empty">Nessun dato — connettiti al servizio</td></tr>
+        </tbody>
+      </table>
     </section>
   </main>
   </div>
