@@ -1,12 +1,24 @@
-# mikrotik-gate (progetto SupervisorTik)
+# TikPanel
 
-Servizio in container che espone una **API REST** per gestire un router **MikroTik (RouterOS)**:
+**v0.9beta**
+
+TikPanel è un'**interfaccia web** (dashboard) per gestire un router **MikroTik (RouterOS)** —
+interfacce, VLAN e client collegati — senza dover passare dalla riga di comando di RouterOS per
+le operazioni di tutti i giorni. Gira come container, con una dashboard su `/ui` e, sotto il
+cofano, una API REST che la dashboard stessa usa (utilizzabile anche direttamente per script e
+integrazioni).
+
+Cosa si può fare dalla dashboard (o via API):
 
 - abilitare/disabilitare interfacce fisiche e virtuali
 - creare, modificare, eliminare **VLAN** (`interface/vlan`)
 - vedere i **client collegati** (DHCP, ARP, WiFi/CAPsMAN, Hotspot)
 - **bloccare** il traffico di un client (address-list + regole firewall + lease DHCP)
 - **forzare la disconnessione** di un client già collegato (kick da WiFi/CAPsMAN/Hotspot, pulizia ARP)
+
+L'accesso alla dashboard avviene con un vero login: si inseriscono le proprie credenziali
+RouterOS, verificate in tempo reale contro il router stesso — nessuna password viene mai salvata,
+solo una sessione firmata con scadenza.
 
 Il container può girare in due modi:
 
@@ -72,12 +84,11 @@ Variabili principali:
 
 ## Dashboard web (`/ui`)
 
-Oltre alle API REST, il servizio espone una dashboard su `http://<host>:8000/ui` con tre sezioni
-(Interfacce, VLAN, Client). L'accesso avviene con un **login vero**, non con l'`API_KEY`: si
-inseriscono le proprie credenziali RouterOS, il backend le verifica in tempo reale contro RouterOS
-stesso (nessuna password viene mai salvata) e rilascia una sessione firmata, valida per la durata
-di `SESSION_EXPIRE_MINUTES`. Può accedere qualunque utente RouterOS con permessi `api`+`rest-api`
-(lo stesso gruppo usato per `MIKROTIK_USER`, o un gruppo dedicato per gli operatori della dashboard).
+La dashboard di TikPanel è su `http://<host>:8000/ui`, con tre sezioni: Interfacce, VLAN, Client.
+Il login (non l'`API_KEY`, riservata all'uso programmatico) usa le credenziali RouterOS
+dell'utente, valide per la durata di `SESSION_EXPIRE_MINUTES`: può accedere chiunque abbia un
+utente RouterOS con permessi `api`+`rest-api` (lo stesso gruppo usato per `MIKROTIK_USER`, o un
+gruppo dedicato per gli operatori della dashboard).
 
 ## Avvio con Docker
 

@@ -1,5 +1,5 @@
 # =============================================================================
-# router-setup.rsc — Setup RouterOS per mikrotik-gate / SupervisorTik
+# router-setup.rsc — Setup RouterOS per TikPanel (mikrotik-gate)
 #
 # Cosa fa:
 #   1. Genera un certificato TLS self-signed e lo assegna al servizio www-ssl

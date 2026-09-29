@@ -1,4 +1,6 @@
-"""SupervisorTik / mikrotik-gate: API REST per gestire interfacce, VLAN e client di un router MikroTik.
+"""TikPanel: interfaccia web (dashboard) per gestire interfacce, VLAN e client di un router
+MikroTik, con sotto anche una API REST usata dalla dashboard stessa (e utilizzabile
+direttamente per script e integrazioni).
 
 Il servizio è pensato per girare come container:
 - direttamente sul router MikroTik (RouterOS 7.4+, feature "container"), oppure
@@ -49,12 +51,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="SupervisorTik / mikrotik-gate",
+    title="TikPanel",
     description=(
-        "API per operare su interfacce fisiche/VLAN di un router MikroTik e per gestire "
-        "(bloccare/disconnettere) i client collegati."
+        "Interfaccia web e API per gestire interfacce fisiche/VLAN di un router MikroTik e per "
+        "gestire (bloccare/disconnettere) i client collegati."
     ),
-    version="1.0.0",
+    version="0.9beta",
     lifespan=lifespan,
 )
 
@@ -75,7 +77,7 @@ async def health() -> dict:
 
 @app.get("/", tags=["meta"])
 async def root() -> dict:
-    return {"service": "mikrotik-gate", "docs": "/docs", "ui": "/ui"}
+    return {"service": "TikPanel", "version": "0.9beta", "docs": "/docs", "ui": "/ui"}
 
 
 @app.get("/ui-config", tags=["meta"])
