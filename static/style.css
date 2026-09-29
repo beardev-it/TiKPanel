@@ -19,6 +19,9 @@
   --danger: #d95c46;       /* corallo/rosso caldo */
   --danger-soft: #fbe0d8;
 
+  --amaranth: #9c2b4e;        /* amaranto pieno */
+  --amaranth-light: #c97e97;  /* amaranto chiaro */
+
   --radius: 12px;
   --radius-sm: 8px;
   --shadow: 0 1px 2px rgba(63, 50, 42, 0.04), 0 4px 16px rgba(63, 50, 42, 0.05);
@@ -56,6 +59,19 @@ body {
 .brand-icon {
   display: inline-flex;
   color: var(--accent);
+}
+
+.brand-word { display: inline-flex; align-items: baseline; gap: 1px; }
+.brand-tik {
+  color: var(--amaranth);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.brand-panel {
+  color: var(--amaranth-light);
+  font-style: italic;
+  font-weight: 500;
 }
 
 .conn-status {
