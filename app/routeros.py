@@ -372,7 +372,7 @@ class RouterOSClient:
                     json={"list": list_name, "address": ip_address, "comment": f"mikrotik-gate: {mac_address}"},
                 )
 
-        leases = await self._request("GET", "/ip/dhcp-server/lease", params={"mac-address": mac_address})
+        leases = await self._list_optional_params("/ip/dhcp-server/lease", {"mac-address": mac_address})
         for lease in leases:
             await self._request("PATCH", f"/ip/dhcp-server/lease/{lease['.id']}", json={"block-access": "yes"})
 
@@ -388,7 +388,7 @@ class RouterOSClient:
             for item in existing:
                 await self._request("DELETE", f"/ip/firewall/address-list/{item['.id']}")
 
-        leases = await self._request("GET", "/ip/dhcp-server/lease", params={"mac-address": mac_address})
+        leases = await self._list_optional_params("/ip/dhcp-server/lease", {"mac-address": mac_address})
         for lease in leases:
             await self._request("PATCH", f"/ip/dhcp-server/lease/{lease['.id']}", json={"block-access": "no"})
 
@@ -438,6 +438,15 @@ class RouterOSClient:
         wireless) come lista vuota invece che come errore."""
         try:
             return await self._request("GET", path)
+        except RouterOSError as exc:
+            if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
+                return []
+            raise
+
+    async def _list_optional_params(self, path: str, params: dict) -> list[dict]:
+        """Come _list_optional, ma con query params (es. filtro per mac-address)."""
+        try:
+            return await self._request("GET", path, params=params)
         except RouterOSError as exc:
             if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
                 return []
