@@ -32,7 +32,7 @@
 :local diskSlot "usb1"
 
 # Immagine e configurazione del container mikrotik-gate
-:local image "ghcr.io/beardev-it/mikrotik-gate:latest"
+:local image "ghcr.io/beardev-it/tikpanel:latest"
 :local containerRootDir ($diskSlot . "/containers/mikrotik-gate")
 :local envListName "mikrotik-gate-env"
 :local gateApiKey "CAMBIA-CON-UNA-CHIAVE-LUNGA-E-CASUALE"

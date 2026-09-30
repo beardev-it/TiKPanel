@@ -71,7 +71,7 @@ Apri `mikrotik-gate-full-setup.rsc`, personalizza in cima al file:
 | `gateApiKey` | chiave lunga e casuale — sarà la `X-API-Key` per uso programmatico (script/curl) |
 | `gateSecretKey` | **obbligatoria**, diversa da `gateApiKey` — firma le sessioni di login della dashboard web `/ui`. Senza questa il container non parte |
 | `containerSubnet` / `containerIp` / `gatewayIp` | modifica solo se `172.16.99.0/24` è già in uso sulla tua rete |
-| `image` | lascia `ghcr.io/beardev-it/mikrotik-gate:latest` salvo tu voglia un'immagine tua |
+| `image` | lascia `ghcr.io/beardev-it/tikpanel:latest` salvo tu voglia un'immagine tua |
 
 Poi:
 ```
