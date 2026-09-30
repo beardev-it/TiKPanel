@@ -163,6 +163,10 @@ class ClientTrafficIn(BaseModel):
     )
 
 
+class InterfaceTrafficBatchIn(BaseModel):
+    names: list[str] = Field(default_factory=list, description="Nomi delle interfacce visibili")
+
+
 class ClientTrafficBatchIn(BaseModel):
     targets: list[ClientTrafficIn] = Field(
         default_factory=list, description="Client visibili: una sola lettura torch per interfaccia"

@@ -158,6 +158,29 @@ class RouterOSClient:
             "tx_packets_per_second": int(sample.get("tx-packets-per-second", 0) or 0),
         }
 
+    async def monitor_interfaces_traffic(self, names: list[str]) -> dict[str, Optional[dict]]:
+        """Traffico di più interfacce con UNA sola chiamata a /interface/monitor-traffic
+        (accetta un elenco separato da virgole e restituisce una riga per interfaccia,
+        identificata dal campo "name"). {nome: {"rx_bps","tx_bps"} | None}."""
+        names = [n for n in dict.fromkeys(names) if n]
+        if not names:
+            return {}
+        try:
+            result = await self._request(
+                "POST", "/interface/monitor-traffic", json={"interface": ",".join(names), "once": "yes"}
+            )
+        except RouterOSError:
+            return {n: None for n in names}  # già loggato da _request
+        samples: dict[str, Optional[dict]] = {n: None for n in names}
+        for row in result if isinstance(result, list) else [result or {}]:
+            name = row.get("name") or (names[0] if len(names) == 1 else None)
+            if name in samples:
+                samples[name] = {
+                    "rx_bps": int(row.get("rx-bits-per-second", 0) or 0),
+                    "tx_bps": int(row.get("tx-bits-per-second", 0) or 0),
+                }
+        return samples
+
     # ---------- VLAN (interface/vlan) ----------
 
     async def list_vlans(self) -> list[dict]:
@@ -714,7 +737,16 @@ class RouterOSClient:
         """Una lettura di /tool/torch (1s) su un'interfaccia; None se non disponibile."""
         try:
             result = await self._request(
-                "POST", "/tool/torch", json={"interface": interface, "duration": "1"}
+                "POST",
+                "/tool/torch",
+                json={
+                    "interface": interface,
+                    "duration": "1",
+                    # Senza questi filtri torch NON scompone per indirizzo: le righe non
+                    # hanno src/dst-address e non c'è modo di attribuirle a un client.
+                    "src-address": "0.0.0.0/0",
+                    "dst-address": "0.0.0.0/0",
+                },
             )
         except RouterOSError as exc:
             if exc.upstream_status_code in self._OPTIONAL_MENU_STATUS_CODES:
@@ -722,14 +754,28 @@ class RouterOSClient:
             raise
         return result or []
 
+    @staticmethod
+    def _torch_rate(flow: dict, *names: str) -> int:
+        """Velocità in bit/s di un flusso torch. Nella REST API di torch i campi sono "tx" e
+        "rx" (bit/s; non "rx-bits-per-second", che è di /interface/monitor-traffic): per
+        robustezza si accettano anche "tx-rate"/"rx-rate" e i nomi di monitor-traffic."""
+        for name in names:
+            value = flow.get(name)
+            if value not in (None, ""):
+                try:
+                    return int(float(value))
+                except (TypeError, ValueError):
+                    continue
+        return 0
+
     def _client_rates(self, flows: list[dict], ip_address: str) -> dict:
         upload_bps = 0
         download_bps = 0
         for flow in flows:
             if self._torch_flow_ip(flow.get("src-address")) == ip_address:
-                upload_bps += int(flow.get("rx-bits-per-second", 0) or 0)
+                upload_bps += self._torch_rate(flow, "rx", "rx-rate", "rx-bits-per-second")
             if self._torch_flow_ip(flow.get("dst-address")) == ip_address:
-                download_bps += int(flow.get("tx-bits-per-second", 0) or 0)
+                download_bps += self._torch_rate(flow, "tx", "tx-rate", "tx-bits-per-second")
         # Approssimazione ragionevole, non un contatore esatto per-client: RouterOS non ne
         # tiene uno nativo senza una coda (queue) dedicata.
         return {"rx_bps": download_bps, "tx_bps": upload_bps}

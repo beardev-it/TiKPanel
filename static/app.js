@@ -162,6 +162,7 @@ function stopAllPolling() {
   for (const id of pollers.values()) clearInterval(id);
   pollers.clear();
   clientTrafficTargets.length = 0;
+  interfaceTrafficTargets.length = 0;
 }
 
 /** Crea un placeholder che un poller aggiorna sul posto (sempre lo stesso nodo, contenuto
@@ -484,10 +485,9 @@ async function loadInterfaces() {
           el("td", {}, [toggleBtn]),
         ])
       );
-      if (!iface.disabled) {
-        pollTraffic(`iface:${iface.name}`, () => api(`/interfaces/${encodeURIComponent(iface.name)}/traffic`), trafficCell);
-      }
+      if (!iface.disabled) registerInterfaceTraffic(iface.name, trafficCell);
     }
+    startInterfaceTrafficPolling();
     setConnStatus("ok", "connesso");
   } catch (err) {
     body.innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(err.message)}</td></tr>`;
@@ -586,10 +586,9 @@ async function loadVlans() {
           el("td", {}, [deleteBtn]),
         ])
       );
-      if (isUp) {
-        pollTraffic(`vlan:${vlan.name}`, () => api(`/interfaces/${encodeURIComponent(vlan.name)}/traffic`), trafficCell);
-      }
+      if (isUp) registerInterfaceTraffic(vlan.name, trafficCell);
     }
+    startInterfaceTrafficPolling();
     setConnStatus("ok", "connesso");
   } catch (err) {
     body.innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(err.message)}</td></tr>`;
@@ -858,6 +857,41 @@ async function disconnectClient(client) {
   });
 }
 
+// Traffico delle interfacce (fisiche, VLAN, radio): una sola richiesta per tutte quelle
+// visibili nella tab, invece di una per riga. Le celle si registrano al render.
+const interfaceTrafficTargets = []; // { name, cell }
+
+function registerInterfaceTraffic(name, cell) {
+  interfaceTrafficTargets.push({ name, cell });
+}
+
+function startInterfaceTrafficPolling() {
+  if (!interfaceTrafficTargets.length || pollers.has("interfaces-batch")) return;
+  const tick = async () => {
+    const live = interfaceTrafficTargets.filter((t) => t.cell.isConnected);
+    if (!live.length) {
+      clearInterval(pollers.get("interfaces-batch"));
+      pollers.delete("interfaces-batch");
+      return;
+    }
+    try {
+      const res = await api("/interfaces/traffic/batch", {
+        method: "POST",
+        body: JSON.stringify({ names: [...new Set(live.map((t) => t.name))] }),
+      });
+      for (const t of live) {
+        const fresh = trafficNode((res.samples || {})[t.name]);
+        t.cell.className = fresh.className;
+        t.cell.replaceChildren(...fresh.childNodes);
+      }
+    } catch (_) {
+      // silenzioso: un singolo poll fallito non deve riempire di toast la UI
+    }
+  };
+  setTimeout(tick, 0); // primo campione subito dopo il render, poi ogni TRAFFIC_POLL_MS
+  pollers.set("interfaces-batch", setInterval(tick, TRAFFIC_POLL_MS));
+}
+
 // Traffico dei client: torch è pesante (ogni chiamata dura ~1s sul router), quindi invece di
 // una chiamata per client ne facciamo UNA per interfaccia, con tutti gli IP visibili, e
 // distribuiamo i risultati alle rispettive celle. Le celle si registrano al render.
@@ -993,6 +1027,7 @@ async function loadClientsAndNetworks() {
 
     renderWifiNetworks(networks);
     renderWiredClients(clients.filter((c) => !wifiMacs.has(c.mac_address)));
+    startInterfaceTrafficPolling();
     startClientTrafficPolling();
     setConnStatus("ok", "connesso");
   } catch (err) {
@@ -1036,7 +1071,7 @@ function renderWifiNetworks(networks) {
 
     const trafficCell = trafficPlaceholder();
     if (net.source !== "sconosciuta") {
-      pollTraffic(`net:${net.name}`, () => api(`/interfaces/${encodeURIComponent(net.name)}/traffic`), trafficCell);
+      registerInterfaceTraffic(net.name, trafficCell);
     }
 
     const clientList = el("div", { class: "wifi-client-list" });
@@ -1130,6 +1165,7 @@ async function loadClientsAndNetworksKeepingSelection() {
     for (const net of networks) for (const c of net.clients || []) wifiMacs.add(c.mac_address);
     renderWifiNetworks(networks);
     renderWiredClients(clients.filter((c) => !wifiMacs.has(c.mac_address)));
+    startInterfaceTrafficPolling();
     startClientTrafficPolling();
   } catch (err) {
     networksContainer.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`;

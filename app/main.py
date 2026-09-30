@@ -29,6 +29,7 @@ from .schemas import (
     ClientTrafficBatchIn,
     ClientTrafficBatchOut,
     ClientTrafficIn,
+    InterfaceTrafficBatchIn,
     InterfaceOut,
     InterfaceStateIn,
     LoginIn,
@@ -264,6 +265,27 @@ async def set_interface_state(name: str, body: InterfaceStateIn) -> InterfaceOut
     if raw is None:
         raw = await get_client().get_interface(name)
     return InterfaceOut.from_raw(raw)
+
+
+@app.post(
+    "/interfaces/traffic/batch",
+    response_model=ClientTrafficBatchOut,
+    tags=["interfacce"],
+    dependencies=[Depends(require_api_key)],
+    summary="Traffico istantaneo (bit/s) di più interfacce con una sola chiamata; chiave = nome",
+)
+async def get_interfaces_traffic_batch(body: InterfaceTrafficBatchIn) -> ClientTrafficBatchOut:
+    raw = await get_client().monitor_interfaces_traffic(body.names)
+    return ClientTrafficBatchOut(
+        samples={
+            name: (
+                TrafficOut(rx_bps=s["rx_bps"], tx_bps=s["tx_bps"], available=True)
+                if s is not None
+                else TrafficOut(rx_bps=0, tx_bps=0, available=False)
+            )
+            for name, s in raw.items()
+        }
+    )
 
 
 @app.get(
