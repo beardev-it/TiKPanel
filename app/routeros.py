@@ -756,26 +756,41 @@ class RouterOSClient:
 
     @staticmethod
     def _torch_rate(flow: dict, *names: str) -> int:
-        """Velocità in bit/s di un flusso torch. Nella REST API di torch i campi sono "tx" e
-        "rx" (bit/s; non "rx-bits-per-second", che è di /interface/monitor-traffic): per
-        robustezza si accettano anche "tx-rate"/"rx-rate" e i nomi di monitor-traffic."""
+        """Velocità in bit/s di un flusso torch. I campi della REST API sono "tx" e "rx"
+        (non "rx-bits-per-second", che è di /interface/monitor-traffic). Accetta sia numeri
+        (bit/s) sia stringhe formattate come nella CLI ("147.8kbps", "1.2Mbps")."""
+        multipliers = {"bps": 1, "kbps": 1_000, "mbps": 1_000_000, "gbps": 1_000_000_000}
         for name in names:
             value = flow.get(name)
-            if value not in (None, ""):
-                try:
-                    return int(float(value))
-                except (TypeError, ValueError):
-                    continue
+            if value in (None, ""):
+                continue
+            text = str(value).strip().lower()
+            factor = 1
+            for suffix in ("gbps", "mbps", "kbps", "bps"):
+                if text.endswith(suffix):
+                    factor = multipliers[suffix]
+                    text = text[: -len(suffix)].strip()
+                    break
+            try:
+                return int(float(text) * factor)
+            except ValueError:
+                continue
         return 0
 
     def _client_rates(self, flows: list[dict], ip_address: str) -> dict:
+        """Torch produce UNA riga per flusso (src = chi ha aperto la connessione) con TX e RX
+        visti dall'interfaccia: TX = ciò che esce verso la LAN, quindi download del client;
+        RX = ciò che entra dalla LAN, quindi upload. Vale sia se il client è src sia se è
+        dst della riga, quindi si sommano tutte le righe che lo coinvolgono."""
         upload_bps = 0
         download_bps = 0
         for flow in flows:
-            if self._torch_flow_ip(flow.get("src-address")) == ip_address:
-                upload_bps += self._torch_rate(flow, "rx", "rx-rate", "rx-bits-per-second")
-            if self._torch_flow_ip(flow.get("dst-address")) == ip_address:
+            if ip_address in (
+                self._torch_flow_ip(flow.get("src-address")),
+                self._torch_flow_ip(flow.get("dst-address")),
+            ):
                 download_bps += self._torch_rate(flow, "tx", "tx-rate", "tx-bits-per-second")
+                upload_bps += self._torch_rate(flow, "rx", "rx-rate", "rx-bits-per-second")
         # Approssimazione ragionevole, non un contatore esatto per-client: RouterOS non ne
         # tiene uno nativo senza una coda (queue) dedicata.
         return {"rx_bps": download_bps, "tx_bps": upload_bps}
