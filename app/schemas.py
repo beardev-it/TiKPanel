@@ -163,6 +163,16 @@ class ClientTrafficIn(BaseModel):
     )
 
 
+class ClientTrafficBatchIn(BaseModel):
+    targets: list[ClientTrafficIn] = Field(
+        default_factory=list, description="Client visibili: una sola lettura torch per interfaccia"
+    )
+
+
+class ClientTrafficBatchOut(BaseModel):
+    samples: dict[str, TrafficOut] = Field(default_factory=dict, description="Traffico per indirizzo IP")
+
+
 class LoginIn(BaseModel):
     username: str = Field(..., description="Nome utente TikPanel")
     password: str = Field(..., description="Password TikPanel")

@@ -4,6 +4,7 @@ Documentazione RouterOS REST API: https://help.mikrotik.com/docs/display/ROS/RES
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Optional
 
@@ -704,7 +705,13 @@ class RouterOSClient:
         """
         if not ip_address or not interface:
             return None
+        flows = await self._torch_flows(interface)
+        if flows is None:
+            return None
+        return self._client_rates(flows, ip_address)
 
+    async def _torch_flows(self, interface: str) -> Optional[list[dict]]:
+        """Una lettura di /tool/torch (1s) su un'interfaccia; None se non disponibile."""
         try:
             result = await self._request(
                 "POST", "/tool/torch", json={"interface": interface, "duration": "1"}
@@ -713,15 +720,42 @@ class RouterOSClient:
             if exc.upstream_status_code in self._OPTIONAL_MENU_STATUS_CODES:
                 return None
             raise
+        return result or []
 
+    def _client_rates(self, flows: list[dict], ip_address: str) -> dict:
         upload_bps = 0
         download_bps = 0
-        for flow in result or []:
+        for flow in flows:
             if self._torch_flow_ip(flow.get("src-address")) == ip_address:
                 upload_bps += int(flow.get("rx-bits-per-second", 0) or 0)
             if self._torch_flow_ip(flow.get("dst-address")) == ip_address:
                 download_bps += int(flow.get("tx-bits-per-second", 0) or 0)
-
         # Approssimazione ragionevole, non un contatore esatto per-client: RouterOS non ne
         # tiene uno nativo senza una coda (queue) dedicata.
         return {"rx_bps": download_bps, "tx_bps": upload_bps}
+
+    async def monitor_clients_traffic(self, targets: list[tuple[str, str]]) -> dict[str, Optional[dict]]:
+        """Traffico di più client con UNA sola chiamata torch per interfaccia (invece di una
+        per client: torch dura ~1s sul router, con N client sarebbero N chiamate pesanti).
+
+        `targets` = [(ip, interface)]. Restituisce {ip: {"rx_bps","tx_bps"} | None}; se
+        una interfaccia fallisce (es. permessi) i suoi client risultano None senza
+        impedire agli altri di avere il loro valore.
+        """
+        by_interface: dict[str, set[str]] = {}
+        for ip, interface in targets:
+            if ip and interface:
+                by_interface.setdefault(interface, set()).add(ip)
+
+        async def one(interface: str) -> tuple[str, Optional[list[dict]]]:
+            try:
+                return interface, await self._torch_flows(interface)
+            except RouterOSError:
+                return interface, None  # già loggato da _request
+
+        results = await asyncio.gather(*(one(i) for i in by_interface))
+        samples: dict[str, Optional[dict]] = {}
+        for interface, flows in results:
+            for ip in by_interface[interface]:
+                samples[ip] = None if flows is None else self._client_rates(flows, ip)
+        return samples

@@ -161,6 +161,7 @@ const TRAFFIC_POLL_MS = 3000;
 function stopAllPolling() {
   for (const id of pollers.values()) clearInterval(id);
   pollers.clear();
+  clientTrafficTargets.length = 0;
 }
 
 /** Crea un placeholder che un poller aggiorna sul posto (sempre lo stesso nodo, contenuto
@@ -857,17 +858,47 @@ async function disconnectClient(client) {
   });
 }
 
-function clientTrafficKey(client) {
-  return `client:${client.mac_address}`;
+// Traffico dei client: torch è pesante (ogni chiamata dura ~1s sul router), quindi invece di
+// una chiamata per client ne facciamo UNA per interfaccia, con tutti gli IP visibili, e
+// distribuiamo i risultati alle rispettive celle. Le celle si registrano al render.
+const clientTrafficTargets = []; // { ip, iface, cell }
+
+function registerClientTraffic(client, cell) {
+  const iface = client.wifi_interface || client.capsman_interface || client.wireless_interface || client.arp_interface;
+  if (!client.ip_address || !iface) {
+    cell.replaceChildren(...trafficNode(null).childNodes);
+    cell.className = "traffic unavailable";
+    return;
+  }
+  clientTrafficTargets.push({ ip: client.ip_address, iface, cell });
 }
 
-function clientTrafficFetcher(client) {
-  const iface = client.wifi_interface || client.capsman_interface || client.wireless_interface || client.arp_interface;
-  return () =>
-    api("/clients/traffic", {
-      method: "POST",
-      body: JSON.stringify({ ip_address: client.ip_address, interface: iface }),
-    });
+function startClientTrafficPolling() {
+  if (!clientTrafficTargets.length || pollers.has("clients-batch")) return;
+  const tick = async () => {
+    const live = clientTrafficTargets.filter((t) => t.cell.isConnected);
+    if (!live.length) {
+      clearInterval(pollers.get("clients-batch"));
+      pollers.delete("clients-batch");
+      return;
+    }
+    try {
+      const res = await api("/clients/traffic/batch", {
+        method: "POST",
+        body: JSON.stringify({ targets: live.map((t) => ({ ip_address: t.ip, interface: t.iface })) }),
+      });
+      for (const t of live) {
+        const fresh = trafficNode((res.samples || {})[t.ip]);
+        t.cell.className = fresh.className;
+        t.cell.replaceChildren(...fresh.childNodes);
+      }
+    } catch (_) {
+      // silenzioso: un singolo poll fallito non deve riempire di toast la UI
+    }
+  };
+  // primo campione subito dopo che le righe sono nel DOM, poi ogni TRAFFIC_POLL_MS
+  setTimeout(tick, 0);
+  pollers.set("clients-batch", setInterval(tick, TRAFFIC_POLL_MS));
 }
 
 function buildClientCheckbox(mac, set = selection.clients, onChange = updateClientBulkBar) {
@@ -888,7 +919,7 @@ function buildWifiClientRow(client) {
     : "";
   const sub = [hostnameLabel, client.ip_address].filter(Boolean).join(" · ");
   const trafficCell = trafficPlaceholder();
-  pollTraffic(clientTrafficKey(client), clientTrafficFetcher(client), trafficCell);
+  registerClientTraffic(client, trafficCell);
 
   const blockBtn = el("button", {
     class: "btn btn-sm " + (client.blocked ? "btn-down" : "btn-up"),
@@ -962,6 +993,7 @@ async function loadClientsAndNetworks() {
 
     renderWifiNetworks(networks);
     renderWiredClients(clients.filter((c) => !wifiMacs.has(c.mac_address)));
+    startClientTrafficPolling();
     setConnStatus("ok", "connesso");
   } catch (err) {
     networksContainer.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`;
@@ -1061,7 +1093,7 @@ function renderWiredClients(clients) {
       onclick: () => (client.blocked ? unblockClient(client) : blockClient(client)),
     });
     const trafficCell = trafficPlaceholder();
-    pollTraffic(clientTrafficKey(client), clientTrafficFetcher(client), trafficCell);
+    registerClientTraffic(client, trafficCell);
 
     body.appendChild(
       el("tr", {}, [
@@ -1098,6 +1130,7 @@ async function loadClientsAndNetworksKeepingSelection() {
     for (const net of networks) for (const c of net.clients || []) wifiMacs.add(c.mac_address);
     renderWifiNetworks(networks);
     renderWiredClients(clients.filter((c) => !wifiMacs.has(c.mac_address)));
+    startClientTrafficPolling();
   } catch (err) {
     networksContainer.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`;
     wiredBody.innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(err.message)}</td></tr>`;

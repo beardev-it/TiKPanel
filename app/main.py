@@ -26,6 +26,8 @@ from .schemas import (
     ClientBlockIn,
     ClientDisconnectIn,
     ClientOut,
+    ClientTrafficBatchIn,
+    ClientTrafficBatchOut,
     ClientTrafficIn,
     InterfaceOut,
     InterfaceStateIn,
@@ -357,6 +359,27 @@ async def get_client_traffic(body: ClientTrafficIn) -> TrafficOut:
     if sample is None:
         return TrafficOut(rx_bps=0, tx_bps=0, available=False)
     return TrafficOut(rx_bps=sample["rx_bps"], tx_bps=sample["tx_bps"], available=True)
+
+
+@app.post(
+    "/clients/traffic/batch",
+    response_model=ClientTrafficBatchOut,
+    tags=["client"],
+    dependencies=[Depends(require_api_key)],
+    summary="Traffico istantaneo di più client: una sola lettura torch per interfaccia",
+)
+async def get_clients_traffic_batch(body: ClientTrafficBatchIn) -> ClientTrafficBatchOut:
+    pairs = [(t.ip_address, t.interface) for t in body.targets if t.ip_address and t.interface]
+    raw = await get_client().monitor_clients_traffic(pairs)
+    samples = {
+        ip: (
+            TrafficOut(rx_bps=s["rx_bps"], tx_bps=s["tx_bps"], available=True)
+            if s is not None
+            else TrafficOut(rx_bps=0, tx_bps=0, available=False)
+        )
+        for ip, s in raw.items()
+    }
+    return ClientTrafficBatchOut(samples=samples)
 
 
 # ---------------------------------------------------------------------------
