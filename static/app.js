@@ -419,7 +419,8 @@ function formatSourceLabel(source) {
 // per poter risalire da un MAC/nome rete ai dati completi quando si esegue un'azione.
 const selection = {
   networks: new Set(), // nomi interfaccia radio selezionati
-  clients: new Set(), // MAC selezionati
+  clients: new Set(), // MAC selezionati, client WiFi (block/unblock/disconnetti)
+  wiredClients: new Set(), // MAC selezionati, client cablati (solo block/unblock: non ha senso "disconnetterli")
 };
 let lastClientsByMac = new Map();
 let lastNetworksByName = new Map();
@@ -478,13 +479,13 @@ function clientTrafficFetcher(client) {
     });
 }
 
-function buildClientCheckbox(mac) {
+function buildClientCheckbox(mac, set = selection.clients, onChange = updateClientBulkBar) {
   const checkbox = el("input", { type: "checkbox" });
-  checkbox.checked = selection.clients.has(mac);
+  checkbox.checked = set.has(mac);
   checkbox.addEventListener("change", () => {
-    if (checkbox.checked) selection.clients.add(mac);
-    else selection.clients.delete(mac);
-    updateClientBulkBar();
+    if (checkbox.checked) set.add(mac);
+    else set.delete(mac);
+    onChange();
   });
   return checkbox;
 }
@@ -534,12 +535,22 @@ function updateClientBulkBar() {
   bar.classList.toggle("hidden", count === 0);
 }
 
+function updateWiredBulkBar() {
+  const bar = document.getElementById("wiredBulkBar");
+  const count = selection.wiredClients.size;
+  document.getElementById("wiredBulkCount").textContent =
+    count === 1 ? "1 client selezionato" : `${count} client selezionati`;
+  bar.classList.toggle("hidden", count === 0);
+}
+
 async function loadClientsAndNetworks() {
   stopAllPolling();
   selection.networks.clear();
   selection.clients.clear();
+  selection.wiredClients.clear();
   updateNetworkBulkBar();
   updateClientBulkBar();
+  updateWiredBulkBar();
 
   const networksContainer = document.getElementById("wifiNetworks");
   const wiredBody = document.getElementById("wiredClientsBody");
@@ -628,7 +639,7 @@ function renderWiredClients(clients) {
   const body = document.getElementById("wiredClientsBody");
   const selectAll = document.getElementById("wiredSelectAll");
   lastWiredMacs = new Set(clients.map((c) => c.mac_address));
-  selectAll.checked = lastWiredMacs.size > 0 && [...lastWiredMacs].every((mac) => selection.clients.has(mac));
+  selectAll.checked = lastWiredMacs.size > 0 && [...lastWiredMacs].every((mac) => selection.wiredClients.has(mac));
   if (!clients.length) {
     body.innerHTML = `<tr><td colspan="7" class="empty">Nessun client cablato rilevato</td></tr>`;
     return;
@@ -640,28 +651,25 @@ function renderWiredClients(clients) {
       class: "badge " + (client.blocked ? "badge-down" : "badge-up"),
       text: client.blocked ? "bloccato" : "libero",
     });
+    // Un client cablato non ha una "sessione" da chiudere lato RouterOS (non è collegato
+    // a una radio o a un hotspot): l'unica azione sensata è bloccarlo/sbloccarlo via MAC.
     const blockBtn = el("button", {
       class: "btn btn-sm " + (client.blocked ? "btn-down" : "btn-up"),
       text: client.blocked ? "Sblocca" : "Blocca",
       onclick: () => (client.blocked ? unblockClient(client) : blockClient(client)),
-    });
-    const disconnectBtn = el("button", {
-      class: "btn btn-sm btn-danger",
-      text: "Disconnetti",
-      onclick: () => disconnectClient(client),
     });
     const trafficCell = trafficPlaceholder();
     pollTraffic(clientTrafficKey(client), clientTrafficFetcher(client), trafficCell);
 
     body.appendChild(
       el("tr", {}, [
-        el("td", {}, [buildClientCheckbox(client.mac_address)]),
+        el("td", {}, [buildClientCheckbox(client.mac_address, selection.wiredClients, updateWiredBulkBar)]),
         el("td", { text: client.mac_address }),
         el("td", { text: client.ip_address || "—" }),
         el("td", { text: client.hostname || "—" }),
         el("td", {}, [blockedBadge]),
         el("td", {}, [trafficCell]),
-        el("td", {}, [blockBtn, disconnectBtn]),
+        el("td", {}, [blockBtn]),
       ])
     );
   }
@@ -669,10 +677,10 @@ function renderWiredClients(clients) {
 
 document.getElementById("wiredSelectAll").addEventListener("change", (e) => {
   for (const mac of lastWiredMacs) {
-    if (e.target.checked) selection.clients.add(mac);
-    else selection.clients.delete(mac);
+    if (e.target.checked) selection.wiredClients.add(mac);
+    else selection.wiredClients.delete(mac);
   }
-  updateClientBulkBar();
+  updateWiredBulkBar();
   // ri-renderizzare tutta la vista è più semplice che sincronizzare ogni checkbox a mano
   loadClientsAndNetworksKeepingSelection();
 });
@@ -721,12 +729,15 @@ async function bulkSetNetworks(disabled) {
   loadClientsAndNetworks();
 }
 
-document.getElementById("bulkBlockClients").addEventListener("click", () => bulkClientAction("block"));
-document.getElementById("bulkUnblockClients").addEventListener("click", () => bulkClientAction("unblock"));
-document.getElementById("bulkDisconnectClients").addEventListener("click", () => bulkClientAction("disconnect"));
+document.getElementById("bulkBlockClients").addEventListener("click", () => bulkClientAction("block", selection.clients));
+document.getElementById("bulkUnblockClients").addEventListener("click", () => bulkClientAction("unblock", selection.clients));
+document.getElementById("bulkDisconnectClients").addEventListener("click", () => bulkClientAction("disconnect", selection.clients));
 
-async function bulkClientAction(action) {
-  const macs = [...selection.clients];
+document.getElementById("bulkBlockWired").addEventListener("click", () => bulkClientAction("block", selection.wiredClients));
+document.getElementById("bulkUnblockWired").addEventListener("click", () => bulkClientAction("unblock", selection.wiredClients));
+
+async function bulkClientAction(action, macSet) {
+  const macs = [...macSet];
   if (!macs.length) return;
   if (action === "disconnect" && !confirm(`Forzare la disconnessione di ${macs.length} client?`)) return;
 

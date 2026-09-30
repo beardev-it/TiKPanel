@@ -429,22 +429,27 @@ class RouterOSClient:
                 await self._request("DELETE", f"/caps-man/registration-table/{reg['.id']}")
                 actions.append("rimosso dalla tabella di registrazione CAPsMAN")
 
+        wifi = await self.list_wifi_registrations()
+        for reg in wifi:
+            if (reg.get("mac-address") or "").upper() == mac_upper:
+                await self._request("DELETE", f"/interface/wifi/registration-table/{reg['.id']}")
+                actions.append("rimosso dalla tabella di registrazione WiFi")
+
         hotspot = await self.list_hotspot_active()
         for act in hotspot:
             if (act.get("mac-address") or "").upper() == mac_upper:
                 await self._request("DELETE", f"/ip/hotspot/active/{act['.id']}")
                 actions.append("sessione hotspot terminata")
 
-        arp = await self.list_arp()
-        for entry in arp:
-            if (entry.get("mac-address") or "").upper() == mac_upper:
-                await self._request("DELETE", f"/ip/arp/{entry['.id']}")
-                actions.append("voce ARP rimossa")
-
         if not actions:
+            # Un client cablato (o comunque non associato a nessuna radio/hotspot) non ha una
+            # "sessione" che RouterOS possa chiudere: cancellare la voce ARP non lo disconnette
+            # davvero, si ripopola al primo pacchetto successivo. L'unica azione reale è
+            # bloccargli il traffico via MAC (block_client), non "disconnetterlo".
             actions.append(
-                "nessuna sessione attiva trovata da terminare direttamente: per un client cablato "
-                "usa /clients/block per tagliargli il traffico, oppure disabilita la porta bridge dedicata"
+                "nessuna sessione wireless/hotspot attiva trovata per questo MAC: un client cablato "
+                "non può essere disconnesso da RouterOS, può solo essere bloccato via MAC "
+                "(usa /clients/block) o scollegato fisicamente / disabilitando la porta dedicata"
             )
 
         return {"mac_address": mac_address, "actions": actions}
