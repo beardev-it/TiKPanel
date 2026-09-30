@@ -23,11 +23,14 @@ Cosa si può fare dalla dashboard (o via API):
 
 L'accesso alla dashboard avviene con un vero login: **utenti propri di TikPanel** (non gli utenti
 RouterOS), con password salvate con hash bcrypt e ruolo **utente / operatore / amministratore**.
-Solo un amministratore può gestire gli altri utenti (tab "Utenti"). Il primo amministratore viene
-creato automaticamente al primo avvio da `INITIAL_ADMIN_USERNAME`/`INITIAL_ADMIN_PASSWORD` (vedi
-sotto): dopo il primo login puoi creare altri utenti e, se vuoi, rimuovere quello iniziale. La
-dashboard ha un tema chiaro e uno scuro (icona in alto a destra, segue anche le preferenze del
-sistema di default).
+Può esistere **un solo amministratore alla volta** (non un elenco di più admin), ed è lui solo a
+poter gestire gli altri utenti (tab "Utenti"). Finché non esiste ancora nessun utente, il login con
+`INITIAL_ADMIN_USERNAME`/`INITIAL_ADMIN_PASSWORD` (vedi sotto) è accettato, ma **non crea da solo un
+utente permanente**: è provvisorio e obbliga subito a scegliere nome utente e password del vero
+amministratore in una schermata dedicata — nessun'altra parte della dashboard è raggiungibile prima
+di completare questo passaggio. Da quel momento le credenziali da env var smettono di funzionare
+(anche senza riavviare il container) e puoi rimuoverle dalla configurazione. La dashboard ha un tema
+chiaro e uno scuro (icona in alto a destra, segue anche le preferenze del sistema di default).
 
 Il container può girare in due modi:
 
@@ -91,19 +94,31 @@ Variabili principali:
 | `BLOCK_ADDRESS_LIST` | Nome della address-list RouterOS usata per bloccare i client |
 | `AUTO_CREATE_FIREWALL_RULE` | Se `true`, crea automaticamente le regole firewall di drop per quella lista |
 | `USERS_FILE` | Percorso del file con utenti/ruoli della dashboard (default `/data/users.json`). Deve stare su storage persistente — vedi sotto |
-| `INITIAL_ADMIN_USERNAME` | Username del primo amministratore, creato solo se `USERS_FILE` è vuoto/assente (default `admin`) |
-| `INITIAL_ADMIN_PASSWORD` | Password del primo amministratore. **Obbligatoria al primo avvio**: senza, nessuno può fare login finché non crei un utente per altra via. Non serve più una volta creato il primo utente — **rimuovila dalla configurazione subito dopo** (vedi sotto), è in chiaro come ogni variabile d'ambiente |
+| `INITIAL_ADMIN_USERNAME` | Username delle credenziali di bootstrap, usate solo se `USERS_FILE` è vuoto/assente per sbloccare la schermata obbligatoria di creazione del vero amministratore (default `admin`) |
+| `INITIAL_ADMIN_PASSWORD` | Password di bootstrap. **Obbligatoria al primo avvio**: senza, nessuno può fare login finché non crei un utente per altra via. Non crea da sola un utente: al login la dashboard obbliga a scegliere nome utente e password del vero amministratore, poi questa variabile smette subito di funzionare — **rimuovila dalla configurazione dopo il setup** (vedi sotto), è in chiaro come ogni variabile d'ambiente |
 
 ## Dashboard web (`/ui`)
 
 La dashboard di TikPanel è su `http://<host>:8000/ui`, con quattro sezioni: Interfacce, VLAN,
-Gestione WiFi, Utenti (solo amministratori). Il login (non l'`API_KEY`, riservata all'uso
+Gestione WiFi, Utenti (solo l'amministratore). Il login (non l'`API_KEY`, riservata all'uso
 programmatico) usa utenti propri di TikPanel — non gli utenti RouterOS — con ruolo utente,
-operatore o amministratore, validi per la durata di `SESSION_EXPIRE_MINUTES`. Solo un
-amministratore vede la tab "Utenti" e può creare/modificare/eliminare gli altri utenti; cosa può
-fare esattamente ciascun ruolo sulle altre funzionalità (interfacce, VLAN, client) è ancora da
-definire — per ora un utente autenticato con qualsiasi ruolo può operare su tutto tranne la
-gestione utenti stessa.
+operatore o amministratore, validi per la durata di `SESSION_EXPIRE_MINUTES`. L'amministratore è
+unico: solo lui vede la tab "Utenti" e può creare/modificare/eliminare gli altri utenti (ma non
+creare un secondo amministratore — va prima retrocesso o eliminato quello esistente); cosa può fare
+esattamente ciascun ruolo sulle altre funzionalità (interfacce, VLAN, client) è ancora da definire —
+per ora un utente autenticato con qualsiasi ruolo può operare su tutto tranne la gestione utenti
+stessa.
+
+### Primo accesso (nessun utente ancora creato)
+
+Finché `USERS_FILE` è vuoto, la schermata di login accetta `INITIAL_ADMIN_USERNAME`/
+`INITIAL_ADMIN_PASSWORD`, ma quel login è solo provvisorio: la dashboard mostra subito (senza
+possibilità di uscirne) una schermata che obbliga a scegliere nome utente e password del vero
+amministratore. Da quel momento:
+
+- quel nuovo utente, con hash bcrypt salvato in `USERS_FILE`, è l'unico amministratore di TikPanel;
+- le credenziali `INITIAL_ADMIN_*` smettono immediatamente di funzionare, anche senza riavviare il
+  container — puoi rimuoverle dalla configurazione quando vuoi.
 
 **Persistenza**: gli utenti sono salvati in `USERS_FILE` dentro il container. Su un host esterno
 con `docker compose`, il file compose già include un volume dedicato (`tikpanel-data:/data`),

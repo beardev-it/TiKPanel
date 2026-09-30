@@ -73,6 +73,33 @@
     </form>
   </div>
 
+  <!-- Setup obbligatorio del primo amministratore (dopo login con le credenziali da env var) -->
+  <div id="setupAdminScreen" class="login-screen hidden">
+    <form id="setupAdminForm" class="login-card">
+      <div class="brand login-brand">
+        <span class="brand-word"><span class="brand-tik">TIK</span><span class="brand-panel">Panel</span></span>
+      </div>
+      <p class="muted">Primo accesso: crea l'amministratore</p>
+      <p class="muted" style="margin-top:10px; text-align:left;">
+        Hai fatto accesso con le credenziali provvisorie della configurazione del container.
+        Scegli ora nome utente e password del vero amministratore: verrà salvato (password con
+        hash) in users.json e sarà l'unico amministratore di TikPanel. Le credenziali da env var
+        smetteranno di funzionare subito dopo.
+      </p>
+      <label>Nuovo utente amministratore
+        <input type="text" id="setupAdminUsername" autocomplete="username" required />
+      </label>
+      <label>Nuova password
+        <input type="password" id="setupAdminPassword" autocomplete="new-password" minlength="8" required />
+      </label>
+      <label>Conferma password
+        <input type="password" id="setupAdminPasswordConfirm" autocomplete="new-password" minlength="8" required />
+      </label>
+      <button type="submit" class="btn btn-primary login-submit">Crea amministratore</button>
+      <p id="setupAdminError" class="login-error hidden"></p>
+    </form>
+  </div>
+
   <div id="app" class="hidden">
   <nav class="tabs">
     <button class="tab active" data-tab="interfaces">Interfacce</button>

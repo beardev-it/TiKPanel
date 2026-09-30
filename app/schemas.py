@@ -159,7 +159,20 @@ class LoginOut(BaseModel):
     token_type: str = "bearer"
     expires_in: int
     username: str
-    role: Role
+    role: Optional[Role] = None
+    must_setup_admin: bool = Field(
+        False,
+        description=(
+            "True se il login ha usato le credenziali provvisorie da env var: il token è valido "
+            "solo per POST /auth/setup-admin, che va chiamato subito per creare il vero (unico) "
+            "amministratore. 'role' è null in questo caso: non è ancora un utente reale."
+        ),
+    )
+
+
+class AdminSetupIn(BaseModel):
+    username: str = Field(..., min_length=1, description="Nome utente del nuovo (e unico) amministratore")
+    password: str = Field(..., min_length=8, description="Almeno 8 caratteri")
 
 
 class UserOut(BaseModel):

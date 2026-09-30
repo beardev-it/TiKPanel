@@ -35,6 +35,25 @@ def create_session_token(settings: Settings, username: str, role: Role) -> tuple
     return token, expires_in
 
 
+BOOTSTRAP_TOKEN_EXPIRE_SECONDS = 15 * 60
+
+
+def create_bootstrap_token(settings: Settings, username: str) -> tuple[str, int]:
+    """Crea un JWT "di bootstrap": non porta nessun ruolo (require_admin/require_api_key lo
+    rifiutano sempre), è valido solo per completare il setup del primo amministratore su
+    /auth/setup-admin e scade rapidamente. Non deve MAI dare accesso al resto dell'API."""
+    expires_in = BOOTSTRAP_TOKEN_EXPIRE_SECONDS
+    now = int(time.time())
+    payload = {
+        "sub": username,
+        "bootstrap": True,
+        "iat": now,
+        "exp": now + expires_in,
+    }
+    token = jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
+    return token, expires_in
+
+
 def decode_session_token(settings: Settings, token: str) -> dict[str, Any]:
     """Decodifica e valida un JWT di sessione. Solleva jwt.PyJWTError se non valido/scaduto."""
     return jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])

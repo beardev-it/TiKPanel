@@ -70,7 +70,7 @@ Apri `tikpanel-full-setup.rsc`, personalizza in cima al file:
 | `diskSlot` | lo slot del tuo disco esterno (es. `usb1`) |
 | `gateApiKey` | chiave lunga e casuale — sarà la `X-API-Key` per uso programmatico (script/curl) |
 | `gateSecretKey` | **obbligatoria**, diversa da `gateApiKey` — firma le sessioni di login della dashboard web `/ui`. Senza questa il container non parte |
-| `dashboardAdminUser` / `dashboardAdminPassword` | credenziali del primo utente della dashboard (ruolo amministratore), creato automaticamente al primo avvio. **Non** è un utente RouterOS: serve solo per fare login su TikPanel, da cui potrai poi creare altri utenti con ruolo operatore/utente |
+| `dashboardAdminUser` / `dashboardAdminPassword` | credenziali di **bootstrap** per il primissimo accesso alla dashboard TikPanel. **Non** sono un utente RouterOS e non creano da sole un utente permanente: al primo login la dashboard obbliga subito a scegliere nome utente e password del vero (unico) amministratore, salvato con hash in `users.json` — da lì potrai poi creare altri utenti con ruolo operatore/utente |
 | `containerSubnet` / `containerIp` / `gatewayIp` | modifica solo se `172.16.99.0/24` è già in uso sulla tua rete |
 | `image` | lascia `ghcr.io/beardev-it/tikpanel:latest` salvo tu voglia un'immagine tua |
 
@@ -103,12 +103,15 @@ Deve rispondere con la lista delle interfacce del router in formato JSON.
 
 Infine apri da un browser sulla tua LAN `http://<containerIp>:8000/ui` (dashboard **TikPanel**):
 fai login con `dashboardAdminUser`/`dashboardAdminPassword` (non sono credenziali RouterOS: sono
-il primo utente della dashboard stessa, creato al primo avvio). Da lì, come amministratore, puoi
-creare altri utenti con ruolo operatore o utente dalla tab "Utenti".
+solo il bootstrap del primissimo accesso). La dashboard mostrerà subito, senza possibilità di
+uscirne, una schermata obbligatoria per creare il vero amministratore: scegli lì nome utente e
+password definitivi (salvati con hash in `users.json`) e prosegui — sarà l'unico amministratore, da
+cui potrai poi creare altri utenti con ruolo operatore o utente dalla tab "Utenti".
 
 **Importante**: `INITIAL_ADMIN_PASSWORD` (la variabile dietro `dashboardAdminPassword`) resta in
-chiaro nella configurazione del container finché non la rimuovi — serve solo al primissimo avvio.
-Una volta confermato il login, rimuovila:
+chiaro nella configurazione del container finché non la rimuovi — serve solo al primissimo avvio, e
+smette comunque di funzionare non appena crei il vero amministratore nella schermata di setup. Una
+volta completato il setup, rimuovila:
 ```
 /container/envs remove [find where name=tikpanel-env and key=INITIAL_ADMIN_PASSWORD]
 /container/stop 0

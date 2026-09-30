@@ -18,10 +18,11 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .auth import create_session_token, decode_session_token
+from .auth import create_bootstrap_token, create_session_token, decode_session_token
 from .config import Settings, get_settings
 from .routeros import RouterOSClient, RouterOSError
 from .schemas import (
+    AdminSetupIn,
     ClientBlockIn,
     ClientDisconnectIn,
     ClientOut,
@@ -40,7 +41,7 @@ from .schemas import (
     WifiModuleStatusOut,
     WifiNetworkOut,
 )
-from .security import require_admin, require_api_key
+from .security import require_admin, require_api_key, require_bootstrap
 from .users import UserError, UserStore
 
 logging.basicConfig(level=logging.INFO)
@@ -135,8 +136,39 @@ async def ui_config(settings: Settings = Depends(get_settings)) -> dict:
 @app.post("/auth/login", response_model=LoginOut, tags=["auth"])
 async def login(body: LoginIn, settings: Settings = Depends(get_settings)) -> LoginOut:
     user = await get_users().verify_credentials(body.username, body.password)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenziali non valide")
+    if user:
+        token, expires_in = create_session_token(settings, user.username, user.role)
+        return LoginOut(access_token=token, expires_in=expires_in, username=user.username, role=user.role)
+
+    # Nessun utente reale corrisponde: proviamo le credenziali provvisorie da env var (valide
+    # solo finché non esiste ancora nessun utente). Il token che ne esce non è una sessione
+    # normale: autorizza solo POST /auth/setup-admin, mai il resto dell'API.
+    if await get_users().verify_bootstrap(body.username, body.password):
+        token, expires_in = create_bootstrap_token(settings, body.username)
+        return LoginOut(
+            access_token=token,
+            expires_in=expires_in,
+            username=body.username,
+            role=None,
+            must_setup_admin=True,
+        )
+
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenziali non valide")
+
+
+@app.post("/auth/setup-admin", response_model=LoginOut, tags=["auth"])
+async def setup_admin(
+    body: AdminSetupIn,
+    settings: Settings = Depends(get_settings),
+    _bootstrap_username: str = Depends(require_bootstrap),
+) -> LoginOut:
+    """Completa il login di bootstrap (credenziali da env var) creando il vero amministratore,
+    con nome utente e password scelti qui e salvati con hash in users_file. Può esistere un solo
+    amministratore: questa rotta funziona solo finché non esiste ancora nessun utente."""
+    try:
+        user = await get_users().setup_initial_admin(body.username, body.password)
+    except UserError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     token, expires_in = create_session_token(settings, user.username, user.role)
     return LoginOut(access_token=token, expires_in=expires_in, username=user.username, role=user.role)
 

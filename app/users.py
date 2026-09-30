@@ -7,6 +7,19 @@ Ogni utente ha un ruolo tra "utente", "operatore" e "amministratore" — cosa
 può fare esattamente ciascun ruolo sulle singole funzionalità verrà definito
 in seguito; per ora solo la gestione utenti stessa richiede "amministratore".
 
+Può esistere un solo utente con ruolo "amministratore" alla volta (vedi
+`_assert_no_existing_admin`): non è un elenco di più admin, ma un singolo
+account con pieni poteri sulla gestione utenti.
+
+Bootstrap: le credenziali INITIAL_ADMIN_USERNAME/INITIAL_ADMIN_PASSWORD (env)
+NON vengono più scritte direttamente come utente permanente in users_file.
+Servono solo per un primo accesso "provvisorio" (tenuto solo in memoria, mai
+salvato su disco) che il server accetta esclusivamente per obbligare la
+creazione del vero amministratore (nome utente e password a scelta) tramite
+`setup_initial_admin`, che è l'unica cosa che quel primo accesso può fare.
+Una volta creato il primo amministratore, le credenziali da env var smettono
+di funzionare (anche senza riavviare il container).
+
 Le chiamate verso RouterOS (interfacce/VLAN/client) continuano a usare le
 credenziali di sistema in MIKROTIK_USER/MIKROTIK_PASSWORD, invariate: quelle
 sono l'utenza con cui TikPanel stesso parla con il router, non c'entrano con
@@ -15,6 +28,7 @@ chi fa login sulla dashboard.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -52,6 +66,11 @@ class UserStore:
     def __init__(self, path: str):
         self._path = Path(path)
         self._lock = asyncio.Lock()
+        # Stato del bootstrap da env var: mai scritto su disco, vive solo qui in memoria
+        # per la durata del processo (vedi ensure_bootstrap_admin/verify_bootstrap/setup_initial_admin).
+        self._bootstrap_username: Optional[str] = None
+        self._bootstrap_password: Optional[str] = None
+        self._bootstrap_active: bool = False
 
     def _read(self) -> dict[str, UserRecord]:
         if not self._path.exists():
@@ -78,11 +97,18 @@ class UserStore:
             return False
 
     async def ensure_bootstrap_admin(self, username: str, password: Optional[str]) -> None:
-        """Se non esiste ancora nessun utente, crea il primo amministratore da env var.
-        Senza questo, dopo il passaggio a utenti locali nessuno potrebbe più fare login."""
+        """Se non esiste ancora nessun utente, abilita un primo accesso "provvisorio" con le
+        credenziali da env var (INITIAL_ADMIN_USERNAME/INITIAL_ADMIN_PASSWORD). Quell'accesso
+        non crea da solo un utente permanente: serve solo per sbloccare `setup_initial_admin`,
+        che obbliga a scegliere nome utente e password del vero (e unico) amministratore."""
         async with self._lock:
             users = self._read()
             if users:
+                # Un amministratore esiste già su disco: il bootstrap da env var non serve più
+                # e va disattivato anche se le variabili d'ambiente sono ancora impostate.
+                self._bootstrap_active = False
+                self._bootstrap_username = None
+                self._bootstrap_password = None
                 return
             if not password:
                 # Nessun utente e nessuna password di bootstrap configurata: lo segnaliamo
@@ -93,20 +119,62 @@ class UserStore:
                     "nessuno potrà fare login sulla dashboard finché non imposti questa variabile "
                     "d'ambiente e riavvii il container."
                 )
+                self._bootstrap_active = False
                 return
-            users[username] = UserRecord(
-                username=username, password_hash=self._hash_password(password), role="amministratore"
-            )
-            self._write(users)
+            self._bootstrap_username = username
+            self._bootstrap_password = password
+            self._bootstrap_active = True
             logger.info(
-                "Primo amministratore TikPanel creato ('%s'). INITIAL_ADMIN_PASSWORD è ora inutile "
-                "(la password è già salvata come hash in %s): per non lasciarla in chiaro nella "
-                "configurazione del container, rimuovila dalle variabili d'ambiente e riavvia "
-                "(su RouterOS: /container/envs remove [find where name=<env-list> and key=INITIAL_ADMIN_PASSWORD]; "
-                "su Docker: toglila da .env e fai 'docker compose up -d').",
+                "Nessun utente TikPanel esiste: accesso provvisorio abilitato con le credenziali "
+                "da env var ('%s'). Al primo login sarà obbligatorio scegliere nome utente e "
+                "password del vero amministratore (salvato con hash in %s); le credenziali da env "
+                "var smetteranno di funzionare subito dopo.",
                 username,
                 self._path,
             )
+
+    @property
+    def bootstrap_pending(self) -> bool:
+        """True se esiste ancora un bootstrap da env var attivo (nessun amministratore creato)."""
+        return self._bootstrap_active
+
+    async def verify_bootstrap(self, username: str, password: str) -> bool:
+        """Verifica le credenziali di bootstrap da env var. Valide solo finché non esiste
+        ancora nessun utente permanente (setup_initial_admin le disattiva subito dopo)."""
+        async with self._lock:
+            if not self._bootstrap_active or self._bootstrap_username is None or self._bootstrap_password is None:
+                return False
+            if self._read():
+                # Un utente è comparso nel frattempo (es. un'altra richiesta di setup ha già
+                # vinto la corsa): il bootstrap non è più valido.
+                self._bootstrap_active = False
+                return False
+        return hmac.compare_digest(username, self._bootstrap_username) and hmac.compare_digest(
+            password, self._bootstrap_password
+        )
+
+    async def setup_initial_admin(self, username: str, password: str) -> UserRecord:
+        """Crea il primo (e per ora unico) amministratore, scelto dall'utente durante il
+        setup obbligatorio dopo un login di bootstrap. Fallisce se esiste già un utente
+        qualsiasi, per non poter essere invocato al di fuori del flusso di bootstrap."""
+        async with self._lock:
+            users = self._read()
+            if users:
+                raise UserError("Esiste già un utente: il setup iniziale non è più disponibile")
+            record = UserRecord(
+                username=username, password_hash=self._hash_password(password), role="amministratore"
+            )
+            users[username] = record
+            self._write(users)
+            self._bootstrap_active = False
+            self._bootstrap_username = None
+            self._bootstrap_password = None
+            logger.info(
+                "Amministratore TikPanel creato da setup iniziale ('%s'). Le credenziali INITIAL_ADMIN_* "
+                "da env var non sono più valide: puoi rimuoverle dalla configurazione del container.",
+                username,
+            )
+            return record
 
     async def list_users(self) -> list[UserRecord]:
         async with self._lock:
@@ -130,6 +198,8 @@ class UserStore:
             users = self._read()
             if username in users:
                 raise UserError(f"L'utente '{username}' esiste già")
+            if role == "amministratore":
+                self._assert_no_existing_admin(users, exclude=username)
             record = UserRecord(username=username, password_hash=self._hash_password(password), role=role)
             users[username] = record
             self._write(users)
@@ -153,6 +223,8 @@ class UserStore:
                 self._assert_not_last_admin(users, exclude=username)
             if disabled is True and user.role == "amministratore":
                 self._assert_not_last_admin(users, exclude=username)
+            if role == "amministratore" and user.role != "amministratore":
+                self._assert_no_existing_admin(users, exclude=username)
 
             if password is not None:
                 user.password_hash = self._hash_password(password)
@@ -183,3 +255,13 @@ class UserStore:
         ]
         if not remaining_admins:
             raise UserError("Impossibile: deve rimanere almeno un amministratore attivo")
+
+    @staticmethod
+    def _assert_no_existing_admin(users: dict[str, UserRecord], *, exclude: str) -> None:
+        """Può esistere un solo utente con ruolo amministratore alla volta."""
+        other_admins = [name for name, u in users.items() if name != exclude and u.role == "amministratore"]
+        if other_admins:
+            raise UserError(
+                f"Esiste già un amministratore ('{other_admins[0]}'): può esisterne solo uno. "
+                "Retrocedilo o eliminalo prima di crearne/promuoverne un altro."
+            )

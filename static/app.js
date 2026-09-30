@@ -184,11 +184,24 @@ async function api(path, options = {}) {
 
 function showLogin() {
   document.getElementById("loginScreen").classList.remove("hidden");
+  document.getElementById("setupAdminScreen").classList.add("hidden");
   document.getElementById("app").classList.add("hidden");
   document.getElementById("userBadge").classList.add("hidden");
   document.getElementById("btnLogout").classList.add("hidden");
   document.getElementById("moduleBadges").classList.add("hidden");
   setConnStatus("unknown", "non connesso");
+}
+
+function showSetupAdmin() {
+  // Schermata obbligatoria: niente app, niente logout, niente via di fuga finché non si crea
+  // il vero amministratore. Il token di bootstrap in state.token non autorizza nient'altro.
+  document.getElementById("loginScreen").classList.add("hidden");
+  document.getElementById("app").classList.add("hidden");
+  document.getElementById("userBadge").classList.add("hidden");
+  document.getElementById("btnLogout").classList.add("hidden");
+  document.getElementById("moduleBadges").classList.add("hidden");
+  document.getElementById("setupAdminScreen").classList.remove("hidden");
+  setConnStatus("unknown", "setup amministratore richiesto");
 }
 
 function showApp() {
@@ -265,13 +278,28 @@ document.getElementById("loginForm").addEventListener("submit", async (e) => {
       throw new Error(body.detail || body.error || `Errore ${resp.status}`);
     }
     const data = await resp.json();
+    document.getElementById("loginPassword").value = "";
+
+    if (data.must_setup_admin) {
+      // Credenziali provvisorie da env var: questo token non è una sessione vera, autorizza
+      // solo la creazione dell'amministratore. Non lo salviamo in localStorage.
+      state.token = data.access_token;
+      state.username = "";
+      state.role = "";
+      document.getElementById("setupAdminUsername").value = "";
+      document.getElementById("setupAdminPassword").value = "";
+      document.getElementById("setupAdminPasswordConfirm").value = "";
+      document.getElementById("setupAdminError").classList.add("hidden");
+      showSetupAdmin();
+      return;
+    }
+
     state.token = data.access_token;
     state.username = data.username;
     state.role = data.role;
     localStorage.setItem(LS_TOKEN, state.token);
     localStorage.setItem(LS_USERNAME, state.username);
     localStorage.setItem(LS_ROLE, state.role);
-    document.getElementById("loginPassword").value = "";
     setConnStatus("ok", "connesso");
     showApp();
     loadInterfaces();
@@ -281,6 +309,57 @@ document.getElementById("loginForm").addEventListener("submit", async (e) => {
   } finally {
     submitBtn.disabled = false;
     submitBtn.textContent = "Accedi";
+  }
+});
+
+document.getElementById("setupAdminForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const username = document.getElementById("setupAdminUsername").value.trim();
+  const password = document.getElementById("setupAdminPassword").value;
+  const passwordConfirm = document.getElementById("setupAdminPasswordConfirm").value;
+  const errorBox = document.getElementById("setupAdminError");
+  errorBox.classList.add("hidden");
+
+  if (password !== passwordConfirm) {
+    errorBox.textContent = "Le due password non coincidono";
+    errorBox.classList.remove("hidden");
+    return;
+  }
+
+  const submitBtn = e.target.querySelector("button[type=submit]");
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Creazione in corso…";
+
+  try {
+    const url = (state.baseUrl || "") + "/auth/setup-admin";
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + state.token },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || body.error || `Errore ${resp.status}`);
+    }
+    const data = await resp.json();
+    state.token = data.access_token;
+    state.username = data.username;
+    state.role = data.role;
+    localStorage.setItem(LS_TOKEN, state.token);
+    localStorage.setItem(LS_USERNAME, state.username);
+    localStorage.setItem(LS_ROLE, state.role);
+    document.getElementById("setupAdminPassword").value = "";
+    document.getElementById("setupAdminPasswordConfirm").value = "";
+    toast(`Amministratore '${data.username}' creato`, "ok");
+    setConnStatus("ok", "connesso");
+    showApp();
+    loadInterfaces();
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.classList.remove("hidden");
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Crea amministratore";
   }
 });
 

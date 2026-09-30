@@ -39,6 +39,28 @@ async def require_api_key(
     )
 
 
+async def require_bootstrap(
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+) -> str:
+    """Per /auth/setup-admin: accetta SOLO un token di bootstrap (create_bootstrap_token),
+    mai una X-API-Key né una sessione normale. Ritorna lo username del bootstrap (payload 'sub')."""
+    settings = get_settings()
+
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+        try:
+            payload = decode_session_token(settings, token)
+        except jwt.PyJWTError:
+            payload = None
+        if payload is not None and payload.get("bootstrap") is True:
+            return str(payload.get("sub"))
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Richiesto un login con le credenziali iniziali (env) non ancora completato con il setup",
+    )
+
+
 async def require_admin(
     x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
     authorization: Optional[str] = Header(default=None, alias="Authorization"),
