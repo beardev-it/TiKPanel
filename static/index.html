@@ -10,6 +10,13 @@
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <!-- Overlay a pagina intera: mostrato durante un'azione che parla con RouterOS (blocca,
+  sblocca, abilita/disabilita, crea/elimina...) finché non è stata anche ricaricata la vista
+  aggiornata, per evitare di poter cliccare due volte o vedere dati non ancora aggiornati. -->
+  <div id="pageOverlay" class="page-overlay hidden" aria-live="polite" aria-busy="true">
+    <div class="page-overlay-spinner" aria-hidden="true"></div>
+  </div>
+
   <header class="topbar">
     <div class="brand">
       <span class="brand-icon" aria-hidden="true">

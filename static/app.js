@@ -65,6 +65,36 @@ function setConnStatus(status, text) {
   document.getElementById("connText").textContent = text;
 }
 
+// ---------- overlay a pagina intera ----------
+// Mostrato per tutta la durata di un'azione che parla con RouterOS (blocca/sblocca,
+// abilita/disabilita, crea/elimina...) e tenuto visibile finché anche il ricaricamento
+// dei dati non è terminato, per evitare doppi click o di vedere dati non aggiornati.
+
+let _pageOverlayDepth = 0;
+
+function showPageOverlay() {
+  _pageOverlayDepth += 1;
+  document.getElementById("pageOverlay").classList.remove("hidden");
+}
+
+function hidePageOverlay() {
+  _pageOverlayDepth = Math.max(0, _pageOverlayDepth - 1);
+  if (_pageOverlayDepth === 0) {
+    document.getElementById("pageOverlay").classList.add("hidden");
+  }
+}
+
+// Esegue `fn` (una funzione async) tenendo l'overlay visibile per tutta la sua durata,
+// inclusi eventuali ricaricamenti fatti al suo interno (basta che siano `await`ati).
+async function withOverlay(fn) {
+  showPageOverlay();
+  try {
+    return await fn();
+  } finally {
+    hidePageOverlay();
+  }
+}
+
 function el(tag, attrs = {}, children = []) {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -445,13 +475,15 @@ async function loadInterfaces() {
 }
 
 async function toggleInterface(name, disabled) {
-  try {
-    await setInterfaceDisabled(name, disabled);
-    toast(`Interfaccia ${name} ${disabled ? "disabilitata" : "abilitata"}`, "ok");
-    loadInterfaces();
-  } catch (err) {
-    toast(err.message, "error");
-  }
+  await withOverlay(async () => {
+    try {
+      await setInterfaceDisabled(name, disabled);
+      toast(`Interfaccia ${name} ${disabled ? "disabilitata" : "abilitata"}`, "ok");
+      await loadInterfaces();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
 }
 
 async function setInterfaceDisabled(name, disabled) {
@@ -546,13 +578,15 @@ async function loadVlans() {
 
 async function deleteVlan(name) {
   if (!confirm(`Eliminare la VLAN "${name}"?`)) return;
-  try {
-    await api(`/vlans/${encodeURIComponent(name)}`, { method: "DELETE" });
-    toast(`VLAN ${name} eliminata`, "ok");
-    loadVlans();
-  } catch (err) {
-    toast(err.message, "error");
-  }
+  await withOverlay(async () => {
+    try {
+      await api(`/vlans/${encodeURIComponent(name)}`, { method: "DELETE" });
+      toast(`VLAN ${name} eliminata`, "ok");
+      await loadVlans();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
 }
 
 document.getElementById("vlanCreateForm").addEventListener("submit", async (e) => {
@@ -564,14 +598,16 @@ document.getElementById("vlanCreateForm").addEventListener("submit", async (e) =
     interface: form.interface.value.trim(),
   };
   if (form.comment.value.trim()) payload.comment = form.comment.value.trim();
-  try {
-    await api("/vlans", { method: "POST", body: JSON.stringify(payload) });
-    toast(`VLAN ${payload.name} creata`, "ok");
-    form.reset();
-    loadVlans();
-  } catch (err) {
-    toast(err.message, "error");
-  }
+  await withOverlay(async () => {
+    try {
+      await api("/vlans", { method: "POST", body: JSON.stringify(payload) });
+      toast(`VLAN ${payload.name} creata`, "ok");
+      form.reset();
+      await loadVlans();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
 });
 
 document.getElementById("refreshVlans").addEventListener("click", loadVlans);
@@ -638,28 +674,32 @@ async function loadUsers() {
 }
 
 async function updateUserRole(username, role, selectEl) {
-  try {
-    await api(`/users/${encodeURIComponent(username)}`, { method: "PATCH", body: JSON.stringify({ role }) });
-    toast(`Ruolo di ${username} aggiornato a ${formatRole(role)}`, "ok");
-    if (username === state.username) {
-      // ho appena cambiato il mio stesso ruolo: la sessione corrente ha ancora il vecchio
-      // ruolo nel token finché non rifaccio login, quindi lo segnalo esplicitamente
-      toast("Il nuovo ruolo si applica dal prossimo login", "ok");
+  await withOverlay(async () => {
+    try {
+      await api(`/users/${encodeURIComponent(username)}`, { method: "PATCH", body: JSON.stringify({ role }) });
+      toast(`Ruolo di ${username} aggiornato a ${formatRole(role)}`, "ok");
+      if (username === state.username) {
+        // ho appena cambiato il mio stesso ruolo: la sessione corrente ha ancora il vecchio
+        // ruolo nel token finché non rifaccio login, quindi lo segnalo esplicitamente
+        toast("Il nuovo ruolo si applica dal prossimo login", "ok");
+      }
+    } catch (err) {
+      toast(err.message, "error");
+      await loadUsers(); // ripristina la select al valore reale
     }
-  } catch (err) {
-    toast(err.message, "error");
-    loadUsers(); // ripristina la select al valore reale
-  }
+  });
 }
 
 async function toggleUserDisabled(username, disabled) {
-  try {
-    await api(`/users/${encodeURIComponent(username)}`, { method: "PATCH", body: JSON.stringify({ disabled }) });
-    toast(`Utente ${username} ${disabled ? "disabilitato" : "riabilitato"}`, "ok");
-    loadUsers();
-  } catch (err) {
-    toast(err.message, "error");
-  }
+  await withOverlay(async () => {
+    try {
+      await api(`/users/${encodeURIComponent(username)}`, { method: "PATCH", body: JSON.stringify({ disabled }) });
+      toast(`Utente ${username} ${disabled ? "disabilitato" : "riabilitato"}`, "ok");
+      await loadUsers();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
 }
 
 async function resetUserPassword(username) {
@@ -669,23 +709,27 @@ async function resetUserPassword(username) {
     toast("La password deve avere almeno 8 caratteri", "error");
     return;
   }
-  try {
-    await api(`/users/${encodeURIComponent(username)}`, { method: "PATCH", body: JSON.stringify({ password }) });
-    toast(`Password di ${username} aggiornata`, "ok");
-  } catch (err) {
-    toast(err.message, "error");
-  }
+  await withOverlay(async () => {
+    try {
+      await api(`/users/${encodeURIComponent(username)}`, { method: "PATCH", body: JSON.stringify({ password }) });
+      toast(`Password di ${username} aggiornata`, "ok");
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
 }
 
 async function deleteUser(username) {
   if (!confirm(`Eliminare l'utente ${username}? L'azione non è reversibile.`)) return;
-  try {
-    await api(`/users/${encodeURIComponent(username)}`, { method: "DELETE" });
-    toast(`Utente ${username} eliminato`, "ok");
-    loadUsers();
-  } catch (err) {
-    toast(err.message, "error");
-  }
+  await withOverlay(async () => {
+    try {
+      await api(`/users/${encodeURIComponent(username)}`, { method: "DELETE" });
+      toast(`Utente ${username} eliminato`, "ok");
+      await loadUsers();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
 }
 
 document.getElementById("userCreateForm").addEventListener("submit", async (e) => {
@@ -696,14 +740,16 @@ document.getElementById("userCreateForm").addEventListener("submit", async (e) =
     password: form.password.value,
     role: form.role.value,
   };
-  try {
-    await api("/users", { method: "POST", body: JSON.stringify(payload) });
-    toast(`Utente ${payload.username} creato`, "ok");
-    form.reset();
-    loadUsers();
-  } catch (err) {
-    toast(err.message, "error");
-  }
+  await withOverlay(async () => {
+    try {
+      await api("/users", { method: "POST", body: JSON.stringify(payload) });
+      toast(`Utente ${payload.username} creato`, "ok");
+      form.reset();
+      await loadUsers();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
 });
 
 document.getElementById("refreshUsers").addEventListener("click", loadUsers);
@@ -747,43 +793,49 @@ let lastNetworksByName = new Map();
 let lastWiredMacs = new Set();
 
 async function blockClient(client) {
-  try {
-    await api("/clients/block", {
-      method: "POST",
-      body: JSON.stringify({ mac_address: client.mac_address, ip_address: client.ip_address }),
-    });
-    toast(`Client ${client.mac_address} bloccato`, "ok");
-    loadClientsAndNetworks();
-  } catch (err) {
-    toast(err.message, "error");
-  }
+  await withOverlay(async () => {
+    try {
+      await api("/clients/block", {
+        method: "POST",
+        body: JSON.stringify({ mac_address: client.mac_address, ip_address: client.ip_address }),
+      });
+      toast(`Client ${client.mac_address} bloccato`, "ok");
+      await loadClientsAndNetworks();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
 }
 
 async function unblockClient(client) {
-  try {
-    await api("/clients/unblock", {
-      method: "POST",
-      body: JSON.stringify({ mac_address: client.mac_address, ip_address: client.ip_address }),
-    });
-    toast(`Client ${client.mac_address} sbloccato`, "ok");
-    loadClientsAndNetworks();
-  } catch (err) {
-    toast(err.message, "error");
-  }
+  await withOverlay(async () => {
+    try {
+      await api("/clients/unblock", {
+        method: "POST",
+        body: JSON.stringify({ mac_address: client.mac_address, ip_address: client.ip_address }),
+      });
+      toast(`Client ${client.mac_address} sbloccato`, "ok");
+      await loadClientsAndNetworks();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
 }
 
 async function disconnectClient(client) {
   if (!confirm(`Forzare la disconnessione di ${client.mac_address}?`)) return;
-  try {
-    const res = await api("/clients/disconnect", {
-      method: "POST",
-      body: JSON.stringify({ mac_address: client.mac_address }),
-    });
-    toast((res.actions || []).join("; ") || "Disconnessione richiesta", "ok");
-    loadClientsAndNetworks();
-  } catch (err) {
-    toast(err.message, "error");
-  }
+  await withOverlay(async () => {
+    try {
+      const res = await api("/clients/disconnect", {
+        method: "POST",
+        body: JSON.stringify({ mac_address: client.mac_address }),
+      });
+      toast((res.actions || []).join("; ") || "Disconnessione richiesta", "ok");
+      await loadClientsAndNetworks();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
 }
 
 function clientTrafficKey(client) {
@@ -1034,13 +1086,15 @@ async function loadClientsAndNetworksKeepingSelection() {
 }
 
 async function toggleNetwork(name, disabled) {
-  try {
-    await setInterfaceDisabled(name, disabled);
-    toast(`Rete ${name} ${disabled ? "disattivata" : "attivata"}`, "ok");
-    loadClientsAndNetworks();
-  } catch (err) {
-    toast(err.message, "error");
-  }
+  await withOverlay(async () => {
+    try {
+      await setInterfaceDisabled(name, disabled);
+      toast(`Rete ${name} ${disabled ? "disattivata" : "attivata"}`, "ok");
+      await loadClientsAndNetworks();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
 }
 
 document.getElementById("bulkEnableNetworks").addEventListener("click", () => bulkSetNetworks(false));
@@ -1049,15 +1103,17 @@ document.getElementById("bulkDisableNetworks").addEventListener("click", () => b
 async function bulkSetNetworks(disabled) {
   const names = [...selection.networks];
   if (!names.length) return;
-  const results = await Promise.allSettled(names.map((name) => setInterfaceDisabled(name, disabled)));
-  const failed = results.filter((r) => r.status === "rejected").length;
-  toast(
-    failed
-      ? `${names.length - failed}/${names.length} reti aggiornate, ${failed} fallite`
-      : `${names.length} rete/i ${disabled ? "disattivate" : "attivate"}`,
-    failed ? "error" : "ok"
-  );
-  loadClientsAndNetworks();
+  await withOverlay(async () => {
+    const results = await Promise.allSettled(names.map((name) => setInterfaceDisabled(name, disabled)));
+    const failed = results.filter((r) => r.status === "rejected").length;
+    toast(
+      failed
+        ? `${names.length - failed}/${names.length} reti aggiornate, ${failed} fallite`
+        : `${names.length} rete/i ${disabled ? "disattivate" : "attivate"}`,
+      failed ? "error" : "ok"
+    );
+    await loadClientsAndNetworks();
+  });
 }
 
 document.getElementById("bulkBlockClients").addEventListener("click", () => bulkClientAction("block", selection.clients));
@@ -1072,21 +1128,23 @@ async function bulkClientAction(action, macSet) {
   if (!macs.length) return;
   if (action === "disconnect" && !confirm(`Forzare la disconnessione di ${macs.length} client?`)) return;
 
-  const results = await Promise.allSettled(
-    macs.map((mac) => {
-      const client = lastClientsByMac.get(mac) || { mac_address: mac };
-      if (action === "block") return blockClientRaw(client);
-      if (action === "unblock") return unblockClientRaw(client);
-      return disconnectClientRaw(client);
-    })
-  );
-  const failed = results.filter((r) => r.status === "rejected").length;
-  const label = { block: "bloccati", unblock: "sbloccati", disconnect: "disconnessi" }[action];
-  toast(
-    failed ? `${macs.length - failed}/${macs.length} client ${label}, ${failed} falliti` : `${macs.length} client ${label}`,
-    failed ? "error" : "ok"
-  );
-  loadClientsAndNetworks();
+  await withOverlay(async () => {
+    const results = await Promise.allSettled(
+      macs.map((mac) => {
+        const client = lastClientsByMac.get(mac) || { mac_address: mac };
+        if (action === "block") return blockClientRaw(client);
+        if (action === "unblock") return unblockClientRaw(client);
+        return disconnectClientRaw(client);
+      })
+    );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    const label = { block: "bloccati", unblock: "sbloccati", disconnect: "disconnessi" }[action];
+    toast(
+      failed ? `${macs.length - failed}/${macs.length} client ${label}, ${failed} falliti` : `${macs.length} client ${label}`,
+      failed ? "error" : "ok"
+    );
+    await loadClientsAndNetworks();
+  });
 }
 
 function blockClientRaw(client) {
