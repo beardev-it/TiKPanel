@@ -3,6 +3,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from .users import Role
+
 
 class InterfaceOut(BaseModel):
     id: str = Field(alias=".id")
@@ -148,8 +150,8 @@ class ClientTrafficIn(BaseModel):
 
 
 class LoginIn(BaseModel):
-    username: str = Field(..., description="Nome utente RouterOS")
-    password: str = Field(..., description="Password RouterOS (mai persistita, solo verificata)")
+    username: str = Field(..., description="Nome utente TikPanel")
+    password: str = Field(..., description="Password TikPanel")
 
 
 class LoginOut(BaseModel):
@@ -157,3 +159,23 @@ class LoginOut(BaseModel):
     token_type: str = "bearer"
     expires_in: int
     username: str
+    role: Role
+
+
+class UserOut(BaseModel):
+    username: str
+    role: Role
+    disabled: bool = False
+    created_at: int
+
+
+class UserCreateIn(BaseModel):
+    username: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=8, description="Almeno 8 caratteri")
+    role: Role
+
+
+class UserUpdateIn(BaseModel):
+    password: Optional[str] = Field(default=None, min_length=8, description="Se valorizzata, cambia la password")
+    role: Optional[Role] = None
+    disabled: Optional[bool] = None

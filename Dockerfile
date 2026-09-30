@@ -21,7 +21,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY static ./static
 
-RUN useradd --create-home --uid 10001 gateuser
+RUN useradd --create-home --uid 10001 gateuser \
+    # /data: utenti/ruoli della dashboard (users.py), deve stare su storage persistente
+    # (volume Docker su host esterno, root-dir del container già persistente su RouterOS)
+    # e deve essere scrivibile da gateuser, non da root.
+    && mkdir -p /data && chown gateuser:gateuser /data
 USER gateuser
 
 EXPOSE 8000

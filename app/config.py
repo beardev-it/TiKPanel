@@ -1,5 +1,6 @@
 """Configurazione del servizio, letta da variabili d'ambiente (.env)."""
 from functools import lru_cache
+from typing import Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -22,12 +23,27 @@ class Settings(BaseSettings):
     # Sicurezza di questo servizio
     api_key: str = Field(..., description="Chiave richiesta nell'header X-API-Key per l'uso programmatico delle API")
 
-    # Login utenti (dashboard web): sessione firmata dopo verifica live delle
-    # credenziali contro RouterOS stesso — nessuna password mai persistita.
+    # Login utenti (dashboard web): utenti propri di TikPanel (non gli utenti RouterOS),
+    # con password con hash bcrypt salvate in users_file. Sessione firmata dopo verifica.
     secret_key: str = Field(
         ..., description="Chiave usata per firmare i token di sessione (JWT). Generane una lunga e casuale."
     )
     session_expire_minutes: int = Field(480, description="Durata della sessione dopo il login (default 8 ore)")
+    users_file: str = Field(
+        "/data/users.json",
+        description="Percorso del file con utenti/ruoli della dashboard TikPanel (deve stare su storage persistente)",
+    )
+    initial_admin_username: str = Field(
+        "admin", description="Username del primo amministratore, creato automaticamente se users_file è vuoto/assente"
+    )
+    initial_admin_password: Optional[str] = Field(
+        None,
+        description=(
+            "Password del primo amministratore, creato solo al primo avvio se non esiste ancora nessun "
+            "utente. Obbligatoria al primo avvio (altrimenti nessuno può fare login); non serve più "
+            "dopo che il primo admin è stato creato."
+        ),
+    )
 
     # URL base che il frontend deve usare per parlare con questo servizio.
     # Vuoto = stessa origine (caso normale: dashboard servita dallo stesso container).

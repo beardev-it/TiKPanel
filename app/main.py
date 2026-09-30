@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .auth import create_session_token, decode_session_token
 from .config import Settings, get_settings
-from .routeros import RouterOSClient, RouterOSError, verify_user_credentials
+from .routeros import RouterOSClient, RouterOSError
 from .schemas import (
     ClientBlockIn,
     ClientDisconnectIn,
@@ -31,13 +31,17 @@ from .schemas import (
     LoginIn,
     LoginOut,
     TrafficOut,
+    UserCreateIn,
+    UserOut,
+    UserUpdateIn,
     VlanCreateIn,
     VlanOut,
     VlanUpdateIn,
     WifiModuleStatusOut,
     WifiNetworkOut,
 )
-from .security import require_api_key
+from .security import require_admin, require_api_key
+from .users import UserError, UserStore
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("tikpanel")
@@ -64,6 +68,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     logging.getLogger().setLevel(settings.log_level.upper())
     app.state.routeros = RouterOSClient(settings)
+    app.state.users = UserStore(settings.users_file)
+    await app.state.users.ensure_bootstrap_admin(settings.initial_admin_username, settings.initial_admin_password)
     logger.info("TiKPanel avviato, target RouterOS: %s:%s", settings.mikrotik_host, settings.mikrotik_port)
     try:
         yield
@@ -84,6 +90,10 @@ app = FastAPI(
 
 def get_client() -> RouterOSClient:
     return app.state.routeros
+
+
+def get_users() -> UserStore:
+    return app.state.users
 
 
 @app.exception_handler(RouterOSError)
@@ -124,14 +134,11 @@ async def ui_config(settings: Settings = Depends(get_settings)) -> dict:
 
 @app.post("/auth/login", response_model=LoginOut, tags=["auth"])
 async def login(body: LoginIn, settings: Settings = Depends(get_settings)) -> LoginOut:
-    ok = await verify_user_credentials(settings, body.username, body.password)
-    if not ok:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Credenziali non valide, oppure l'utente non ha i permessi api/rest-api su RouterOS",
-        )
-    token, expires_in = create_session_token(settings, body.username)
-    return LoginOut(access_token=token, expires_in=expires_in, username=body.username)
+    user = await get_users().verify_credentials(body.username, body.password)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenziali non valide")
+    token, expires_in = create_session_token(settings, user.username, user.role)
+    return LoginOut(access_token=token, expires_in=expires_in, username=user.username, role=user.role)
 
 
 @app.get("/auth/me", tags=["auth"], dependencies=[Depends(require_api_key)])
@@ -139,12 +146,51 @@ async def me(authorization: str | None = Header(default=None)) -> dict:
     settings = get_settings()
     if not authorization or not authorization.lower().startswith("bearer "):
         # Autenticato con X-API-Key (uso programmatico), non c'è un utente associato
-        return {"username": None, "auth": "api-key"}
+        return {"username": None, "role": None, "auth": "api-key"}
     try:
         payload = decode_session_token(settings, authorization[7:].strip())
     except Exception:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sessione non valida o scaduta")
-    return {"username": payload.get("sub"), "auth": "session"}
+    return {"username": payload.get("sub"), "role": payload.get("role"), "auth": "session"}
+
+
+# ---------------------------------------------------------------------------
+# Gestione utenti della dashboard (solo amministratore)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/users", response_model=list[UserOut], tags=["users"], dependencies=[Depends(require_admin)])
+async def list_users() -> list[UserOut]:
+    return [UserOut(**u.model_dump()) for u in await get_users().list_users()]
+
+
+@app.post("/users", response_model=UserOut, tags=["users"], dependencies=[Depends(require_admin)])
+async def create_user(body: UserCreateIn) -> UserOut:
+    try:
+        user = await get_users().create_user(body.username, body.password, body.role)
+    except UserError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return UserOut(**user.model_dump())
+
+
+@app.patch("/users/{username}", response_model=UserOut, tags=["users"], dependencies=[Depends(require_admin)])
+async def update_user(username: str, body: UserUpdateIn) -> UserOut:
+    try:
+        user = await get_users().update_user(
+            username, password=body.password, role=body.role, disabled=body.disabled
+        )
+    except UserError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return UserOut(**user.model_dump())
+
+
+@app.delete("/users/{username}", tags=["users"], dependencies=[Depends(require_admin)])
+async def delete_user(username: str) -> dict:
+    try:
+        await get_users().delete_user(username)
+    except UserError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {"deleted": username}
 
 
 # Dashboard web statica (bozza): serve i file in static/ su /ui.

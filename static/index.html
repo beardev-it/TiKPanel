@@ -78,6 +78,7 @@
     <button class="tab active" data-tab="interfaces">Interfacce</button>
     <button class="tab" data-tab="vlans">VLAN</button>
     <button class="tab" data-tab="wifi">Gestione WiFi</button>
+    <button class="tab hidden" data-tab="users" id="usersTabBtn">Utenti</button>
   </nav>
 
   <main>
@@ -176,6 +177,34 @@
         </thead>
         <tbody id="wiredClientsBody">
           <tr><td colspan="7" class="empty">Nessun dato — connettiti al servizio</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- UTENTI (solo amministratore) -->
+    <section id="tab-users" class="panel">
+      <div class="panel-head">
+        <h2>Utenti</h2>
+        <button class="btn" id="refreshUsers">Aggiorna</button>
+      </div>
+
+      <form id="userCreateForm" class="inline-form">
+        <input type="text" name="username" placeholder="username" required autocomplete="off" />
+        <input type="password" name="password" placeholder="password (min 8 caratteri)" minlength="8" required autocomplete="new-password" />
+        <select name="role" required>
+          <option value="utente">utente</option>
+          <option value="operatore">operatore</option>
+          <option value="amministratore">amministratore</option>
+        </select>
+        <button type="submit" class="btn btn-primary">Crea utente</button>
+      </form>
+
+      <table class="data-table">
+        <thead>
+          <tr><th>Username</th><th>Ruolo</th><th>Stato</th><th>Creato</th><th></th></tr>
+        </thead>
+        <tbody id="usersBody">
+          <tr><td colspan="5" class="empty">Nessun dato — connettiti al servizio</td></tr>
         </tbody>
       </table>
     </section>

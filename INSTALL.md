@@ -70,6 +70,7 @@ Apri `tikpanel-full-setup.rsc`, personalizza in cima al file:
 | `diskSlot` | lo slot del tuo disco esterno (es. `usb1`) |
 | `gateApiKey` | chiave lunga e casuale — sarà la `X-API-Key` per uso programmatico (script/curl) |
 | `gateSecretKey` | **obbligatoria**, diversa da `gateApiKey` — firma le sessioni di login della dashboard web `/ui`. Senza questa il container non parte |
+| `dashboardAdminUser` / `dashboardAdminPassword` | credenziali del primo utente della dashboard (ruolo amministratore), creato automaticamente al primo avvio. **Non** è un utente RouterOS: serve solo per fare login su TikPanel, da cui potrai poi creare altri utenti con ruolo operatore/utente |
 | `containerSubnet` / `containerIp` / `gatewayIp` | modifica solo se `172.16.99.0/24` è già in uso sulla tua rete |
 | `image` | lascia `ghcr.io/beardev-it/tikpanel:latest` salvo tu voglia un'immagine tua |
 
@@ -101,8 +102,9 @@ Per un endpoint autenticato:
 Deve rispondere con la lista delle interfacce del router in formato JSON.
 
 Infine apri da un browser sulla tua LAN `http://<containerIp>:8000/ui` (dashboard **TikPanel**):
-il login richiede le tue credenziali RouterOS (non la `gateApiKey`), verificate in tempo reale
-contro RouterOS stesso — può accedere chiunque abbia un utente RouterOS con permessi `api`+`rest-api`.
+fai login con `dashboardAdminUser`/`dashboardAdminPassword` (non sono credenziali RouterOS: sono
+il primo utente della dashboard stessa, creato al primo avvio). Da lì, come amministratore, puoi
+creare altri utenti con ruolo operatore o utente dalla tab "Utenti".
 
 ---
 

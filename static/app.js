@@ -1,19 +1,22 @@
 // TiKPanel — dashboard (bozza)
 // Nessuna dipendenza esterna: fetch + DOM puro.
 //
-// Autenticazione: login con le credenziali RouterOS dell'utente (verificate
-// dal server in tempo reale contro RouterOS stesso), poi si usa un token di
-// sessione (JWT) firmato dal server. Nessuna password viene mai salvata nel
-// browser: solo il token, che scade da solo dopo qualche ora.
+// Autenticazione: login con un utente proprio di TikPanel (non un utente RouterOS),
+// con ruolo utente/operatore/amministratore. Il server verifica le credenziali contro
+// il proprio elenco utenti e rilascia un token di sessione (JWT) firmato, che include
+// anche il ruolo. Nessuna password viene mai salvata nel browser: solo il token, che
+// scade da solo dopo qualche ora.
 
 const LS_TOKEN = "tikpanel.token";
 const LS_USERNAME = "tikpanel.username";
+const LS_ROLE = "tikpanel.role";
 const LS_THEME = "tikpanel.theme";
 
 const state = {
   baseUrl: "", // caricato da /ui-config all'avvio, non richiesto all'utente
   token: localStorage.getItem(LS_TOKEN) || "",
   username: localStorage.getItem(LS_USERNAME) || "",
+  role: localStorage.getItem(LS_ROLE) || "",
 };
 
 // ---------- tema chiaro/scuro ----------
@@ -195,6 +198,18 @@ function showApp() {
   badge.textContent = state.username;
   badge.classList.remove("hidden");
   document.getElementById("btnLogout").classList.remove("hidden");
+
+  const usersTabBtn = document.getElementById("usersTabBtn");
+  const isAdmin = state.role === "amministratore";
+  usersTabBtn.classList.toggle("hidden", !isAdmin);
+  if (!isAdmin && usersTabBtn.classList.contains("active")) {
+    // se per qualche motivo la tab utenti era attiva e il ruolo non lo consente più
+    // (es. sessione ripristinata con un ruolo cambiato nel frattempo), torna a Interfacce
+    usersTabBtn.classList.remove("active");
+    document.querySelector('.tab[data-tab="interfaces"]').classList.add("active");
+    document.getElementById("tab-users").classList.remove("active");
+    document.getElementById("tab-interfaces").classList.add("active");
+  }
 }
 
 async function loadWifiModuleStatus() {
@@ -217,8 +232,10 @@ async function loadWifiModuleStatus() {
 function logout(message) {
   state.token = "";
   state.username = "";
+  state.role = "";
   localStorage.removeItem(LS_TOKEN);
   localStorage.removeItem(LS_USERNAME);
+  localStorage.removeItem(LS_ROLE);
   showLogin();
   if (message) toast(message, "error");
 }
@@ -250,8 +267,10 @@ document.getElementById("loginForm").addEventListener("submit", async (e) => {
     const data = await resp.json();
     state.token = data.access_token;
     state.username = data.username;
+    state.role = data.role;
     localStorage.setItem(LS_TOKEN, state.token);
     localStorage.setItem(LS_USERNAME, state.username);
+    localStorage.setItem(LS_ROLE, state.role);
     document.getElementById("loginPassword").value = "";
     setConnStatus("ok", "connesso");
     showApp();
@@ -277,6 +296,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
     if (tab.dataset.tab === "interfaces") loadInterfaces();
     if (tab.dataset.tab === "vlans") loadVlans();
     if (tab.dataset.tab === "wifi") loadClientsAndNetworks();
+    if (tab.dataset.tab === "users") loadUsers();
   });
 });
 
@@ -461,6 +481,138 @@ document.getElementById("vlanCreateForm").addEventListener("submit", async (e) =
 });
 
 document.getElementById("refreshVlans").addEventListener("click", loadVlans);
+
+// ---------- utenti (solo amministratore) ----------
+
+function formatRole(role) {
+  return { utente: "Utente", operatore: "Operatore", amministratore: "Amministratore" }[role] || role;
+}
+
+async function loadUsers() {
+  const body = document.getElementById("usersBody");
+  body.innerHTML = `<tr><td colspan="5" class="empty">Caricamento…</td></tr>`;
+  try {
+    const data = await api("/users");
+    if (!data.length) {
+      body.innerHTML = `<tr><td colspan="5" class="empty">Nessun utente</td></tr>`;
+      return;
+    }
+    body.innerHTML = "";
+    for (const user of data) {
+      const roleSelect = el(
+        "select",
+        { class: "role-select" },
+        ["utente", "operatore", "amministratore"].map((r) => el("option", { value: r, text: formatRole(r) }))
+      );
+      roleSelect.value = user.role;
+      roleSelect.addEventListener("change", () => updateUserRole(user.username, roleSelect.value, roleSelect));
+
+      const statusBadge = el("span", {
+        class: "badge " + (user.disabled ? "badge-down" : "badge-up"),
+        text: user.disabled ? "disabilitato" : "attivo",
+      });
+      const toggleBtn = el("button", {
+        class: "btn btn-sm " + (user.disabled ? "btn-up" : "btn-down"),
+        text: user.disabled ? "Riabilita" : "Disabilita",
+        onclick: () => toggleUserDisabled(user.username, !user.disabled),
+      });
+      const resetPwBtn = el("button", {
+        class: "btn btn-sm",
+        text: "Reimposta password",
+        onclick: () => resetUserPassword(user.username),
+      });
+      const deleteBtn = el("button", {
+        class: "btn btn-sm btn-danger",
+        text: "Elimina",
+        onclick: () => deleteUser(user.username),
+      });
+      const isSelf = user.username === state.username;
+
+      body.appendChild(
+        el("tr", {}, [
+          el("td", { text: user.username + (isSelf ? " (tu)" : "") }),
+          el("td", {}, [roleSelect]),
+          el("td", {}, [statusBadge]),
+          el("td", { text: new Date(user.created_at * 1000).toLocaleString("it-IT") }),
+          el("td", {}, [toggleBtn, resetPwBtn, deleteBtn]),
+        ])
+      );
+    }
+  } catch (err) {
+    body.innerHTML = `<tr><td colspan="5" class="empty">${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+async function updateUserRole(username, role, selectEl) {
+  try {
+    await api(`/users/${encodeURIComponent(username)}`, { method: "PATCH", body: JSON.stringify({ role }) });
+    toast(`Ruolo di ${username} aggiornato a ${formatRole(role)}`, "ok");
+    if (username === state.username) {
+      // ho appena cambiato il mio stesso ruolo: la sessione corrente ha ancora il vecchio
+      // ruolo nel token finché non rifaccio login, quindi lo segnalo esplicitamente
+      toast("Il nuovo ruolo si applica dal prossimo login", "ok");
+    }
+  } catch (err) {
+    toast(err.message, "error");
+    loadUsers(); // ripristina la select al valore reale
+  }
+}
+
+async function toggleUserDisabled(username, disabled) {
+  try {
+    await api(`/users/${encodeURIComponent(username)}`, { method: "PATCH", body: JSON.stringify({ disabled }) });
+    toast(`Utente ${username} ${disabled ? "disabilitato" : "riabilitato"}`, "ok");
+    loadUsers();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function resetUserPassword(username) {
+  const password = prompt(`Nuova password per ${username} (minimo 8 caratteri):`);
+  if (!password) return;
+  if (password.length < 8) {
+    toast("La password deve avere almeno 8 caratteri", "error");
+    return;
+  }
+  try {
+    await api(`/users/${encodeURIComponent(username)}`, { method: "PATCH", body: JSON.stringify({ password }) });
+    toast(`Password di ${username} aggiornata`, "ok");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function deleteUser(username) {
+  if (!confirm(`Eliminare l'utente ${username}? L'azione non è reversibile.`)) return;
+  try {
+    await api(`/users/${encodeURIComponent(username)}`, { method: "DELETE" });
+    toast(`Utente ${username} eliminato`, "ok");
+    loadUsers();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+document.getElementById("userCreateForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const payload = {
+    username: form.username.value.trim(),
+    password: form.password.value,
+    role: form.role.value,
+  };
+  try {
+    await api("/users", { method: "POST", body: JSON.stringify(payload) });
+    toast(`Utente ${payload.username} creato`, "ok");
+    form.reset();
+    loadUsers();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+});
+
+document.getElementById("refreshUsers").addEventListener("click", loadUsers);
 
 // ---------- client & reti WiFi (vista unificata) ----------
 
@@ -879,7 +1031,11 @@ async function validateExistingSession() {
     });
     if (!resp.ok) return false;
     const data = await resp.json();
-    return data.auth === "session" && data.username === state.username;
+    if (data.auth !== "session" || data.username !== state.username) return false;
+    // il ruolo potrebbe essere cambiato da quando è stato rilasciato il token: riallinea
+    state.role = data.role || state.role;
+    localStorage.setItem(LS_ROLE, state.role);
+    return true;
   } catch (_) {
     return false;
   }

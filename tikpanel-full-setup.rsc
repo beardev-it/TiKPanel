@@ -38,6 +38,12 @@
 :local gateApiKey "CAMBIA-CON-UNA-CHIAVE-LUNGA-E-CASUALE"
 :local gateSecretKey "CAMBIA-CON-UN-ALTRA-CHIAVE-LUNGA-E-CASUALE-DIVERSA"
 
+# Primo utente della dashboard TikPanel (ruolo amministratore), creato in automatico
+# al primo avvio se non esiste ancora nessun utente. Non è un utente RouterOS: serve
+# solo per fare login su TikPanel stessa, poi da lì puoi crearne altri con ruoli diversi.
+:local dashboardAdminUser "admin"
+:local dashboardAdminPassword "CAMBIA-CON-UNA-PASSWORD-LUNGA-E-CASUALE"
+
 # =============================================================================
 # 1. Certificato TLS self-signed per la REST API (www-ssl)
 # =============================================================================
@@ -107,6 +113,8 @@
 /container/envs add name=$envListName key=MIKROTIK_PASSWORD value=$apiPassword
 /container/envs add name=$envListName key=API_KEY value=$gateApiKey
 /container/envs add name=$envListName key=SECRET_KEY value=$gateSecretKey
+/container/envs add name=$envListName key=INITIAL_ADMIN_USERNAME value=$dashboardAdminUser
+/container/envs add name=$envListName key=INITIAL_ADMIN_PASSWORD value=$dashboardAdminPassword
 :log info "TiKPanel: variabili d'ambiente del container configurate"
 
 # =============================================================================

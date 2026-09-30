@@ -21,10 +21,13 @@ Cosa si può fare dalla dashboard (o via API):
 - vedere il **traffico in tempo reale** (bit/s in download e upload) di ogni interfaccia, VLAN,
   radio WiFi e client collegato
 
-L'accesso alla dashboard avviene con un vero login: si inseriscono le proprie credenziali
-RouterOS, verificate in tempo reale contro il router stesso — nessuna password viene mai salvata,
-solo una sessione firmata con scadenza. La dashboard ha un tema chiaro e uno scuro (icona in alto
-a destra, segue anche le preferenze del sistema di default).
+L'accesso alla dashboard avviene con un vero login: **utenti propri di TikPanel** (non gli utenti
+RouterOS), con password salvate con hash bcrypt e ruolo **utente / operatore / amministratore**.
+Solo un amministratore può gestire gli altri utenti (tab "Utenti"). Il primo amministratore viene
+creato automaticamente al primo avvio da `INITIAL_ADMIN_USERNAME`/`INITIAL_ADMIN_PASSWORD` (vedi
+sotto): dopo il primo login puoi creare altri utenti e, se vuoi, rimuovere quello iniziale. La
+dashboard ha un tema chiaro e uno scuro (icona in alto a destra, segue anche le preferenze del
+sistema di default).
 
 Il container può girare in due modi:
 
@@ -87,14 +90,26 @@ Variabili principali:
 | `PUBLIC_BASE_URL` | URL base che il frontend usa per parlare col servizio. Lascia vuoto se la dashboard è servita dallo stesso container (caso normale) |
 | `BLOCK_ADDRESS_LIST` | Nome della address-list RouterOS usata per bloccare i client |
 | `AUTO_CREATE_FIREWALL_RULE` | Se `true`, crea automaticamente le regole firewall di drop per quella lista |
+| `USERS_FILE` | Percorso del file con utenti/ruoli della dashboard (default `/data/users.json`). Deve stare su storage persistente — vedi sotto |
+| `INITIAL_ADMIN_USERNAME` | Username del primo amministratore, creato solo se `USERS_FILE` è vuoto/assente (default `admin`) |
+| `INITIAL_ADMIN_PASSWORD` | Password del primo amministratore. **Obbligatoria al primo avvio**: senza, nessuno può fare login finché non crei un utente per altra via. Non serve più una volta creato il primo utente |
 
 ## Dashboard web (`/ui`)
 
-La dashboard di TikPanel è su `http://<host>:8000/ui`, con tre sezioni: Interfacce, VLAN, Client.
-Il login (non l'`API_KEY`, riservata all'uso programmatico) usa le credenziali RouterOS
-dell'utente, valide per la durata di `SESSION_EXPIRE_MINUTES`: può accedere chiunque abbia un
-utente RouterOS con permessi `api`+`rest-api` (lo stesso gruppo usato per `MIKROTIK_USER`, o un
-gruppo dedicato per gli operatori della dashboard).
+La dashboard di TikPanel è su `http://<host>:8000/ui`, con quattro sezioni: Interfacce, VLAN,
+Gestione WiFi, Utenti (solo amministratori). Il login (non l'`API_KEY`, riservata all'uso
+programmatico) usa utenti propri di TikPanel — non gli utenti RouterOS — con ruolo utente,
+operatore o amministratore, validi per la durata di `SESSION_EXPIRE_MINUTES`. Solo un
+amministratore vede la tab "Utenti" e può creare/modificare/eliminare gli altri utenti; cosa può
+fare esattamente ciascun ruolo sulle altre funzionalità (interfacce, VLAN, client) è ancora da
+definire — per ora un utente autenticato con qualsiasi ruolo può operare su tutto tranne la
+gestione utenti stessa.
+
+**Persistenza**: gli utenti sono salvati in `USERS_FILE` dentro il container. Su un host esterno
+con `docker compose`, il file compose già include un volume dedicato (`tikpanel-data:/data`),
+quindi sopravvive a un `docker compose up -d --build`. Sul router MikroTik, `/data` sta dentro il
+`root-dir` del container, che è già l'intero filesystem persistito sul disco esterno — nessuna
+configurazione aggiuntiva necessaria lì.
 
 ## Avvio con Docker
 
