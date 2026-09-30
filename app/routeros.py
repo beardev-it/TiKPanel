@@ -390,6 +390,41 @@ class RouterOSClient:
                 },
             )
 
+    async def _make_lease_static(self, mac_address: str, lease_id: str) -> str:
+        """RouterOS rifiuta qualunque modifica diretta su un lease dinamico ("failure: can not
+        change dynamic lease"): l'unico modo per impostare block-access su un client il cui IP
+        arriva da un lease dinamico è prima renderlo statico, con l'azione make-static esposta
+        dalla REST API come POST su .../lease/make-static. La conversione può cambiare l'.id
+        interno del lease, quindi dopo va ricercato di nuovo per mac-address.
+        Nota collaterale (comunicata anche in UI): da quel momento il lease resta statico per
+        sempre, anche dopo uno sblocco — non è annullabile automaticamente, è il prezzo per poter
+        bloccare quel client in modo persistente invece che al prossimo rinnovo del lease."""
+        try:
+            await self._request("POST", "/ip/dhcp-server/lease/make-static", json={".id": lease_id})
+        except RouterOSError as exc:
+            # Se nel frattempo il lease è già diventato statico (es. richiesta doppia/corsa),
+            # RouterOS risponde con un errore qui ma va bene procedere lo stesso: lo rileggiamo
+            # sotto e la PATCH successiva funzionerà normalmente su un lease ormai statico. Se
+            # invece il problema è un altro, lo segnaliamo in log ma proviamo comunque a
+            # continuare: la PATCH successiva darà un errore chiaro se il lease non è utilizzabile.
+            logger.warning("make-static sul lease %s (mac %s) non riuscita: %s", lease_id, mac_address, exc)
+
+        refreshed = await self._list_optional_params("/ip/dhcp-server/lease", {"mac-address": mac_address})
+        for lease in refreshed:
+            if (lease.get("mac-address") or "").upper() == mac_address.upper():
+                return lease.get(".id", lease_id)
+        return lease_id
+
+    async def _set_leases_block_access(self, mac_address: str, *, blocked: bool) -> None:
+        leases = await self._list_optional_params("/ip/dhcp-server/lease", {"mac-address": mac_address})
+        for lease in leases:
+            lease_id = lease.get(".id")
+            if blocked and lease.get("dynamic") == "true":
+                lease_id = await self._make_lease_static(mac_address, lease_id)
+            await self._request(
+                "PATCH", f"/ip/dhcp-server/lease/{lease_id}", json={"block-access": "yes" if blocked else "no"}
+            )
+
     async def block_client(self, mac_address: str, ip_address: Optional[str] = None) -> dict:
         """Blocca un client: address-list + drop firewall, opzionale disabilitazione lease DHCP."""
         list_name = self.settings.block_address_list
@@ -408,9 +443,7 @@ class RouterOSClient:
                     json={"list": list_name, "address": ip_address, "comment": f"TiKPanel: {mac_address}"},
                 )
 
-        leases = await self._list_optional_params("/ip/dhcp-server/lease", {"mac-address": mac_address})
-        for lease in leases:
-            await self._request("PATCH", f"/ip/dhcp-server/lease/{lease['.id']}", json={"block-access": "yes"})
+        await self._set_leases_block_access(mac_address, blocked=True)
 
         return {"mac_address": mac_address, "ip_address": ip_address, "blocked": True, "address_list": list_name}
 
@@ -424,9 +457,7 @@ class RouterOSClient:
             for item in existing or []:
                 await self._request("DELETE", f"/ip/firewall/address-list/{item['.id']}")
 
-        leases = await self._list_optional_params("/ip/dhcp-server/lease", {"mac-address": mac_address})
-        for lease in leases:
-            await self._request("PATCH", f"/ip/dhcp-server/lease/{lease['.id']}", json={"block-access": "no"})
+        await self._set_leases_block_access(mac_address, blocked=False)
 
         return {"mac_address": mac_address, "ip_address": ip_address, "blocked": False, "address_list": list_name}
 

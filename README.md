@@ -13,7 +13,10 @@ Cosa si può fare dalla dashboard (o via API):
 - abilitare/disabilitare interfacce fisiche e virtuali
 - creare, modificare, eliminare **VLAN** (`interface/vlan`)
 - vedere i **client collegati** (DHCP, ARP, WiFi/CAPsMAN, Hotspot)
-- **bloccare** il traffico di un client (address-list + regole firewall + lease DHCP)
+- **bloccare** il traffico di un client (address-list + regole firewall + lease DHCP — se il
+  lease del client è ancora dinamico, RouterOS non permette di modificarlo direttamente:
+  TikPanel lo rende prima statico automaticamente, il che significa che quel client mantiene
+  da quel momento sempre lo stesso IP, anche dopo uno sblocco)
 - **forzare la disconnessione** di un client già collegato (kick da WiFi/CAPsMAN/Hotspot, pulizia ARP)
 - vedere le **reti WiFi configurate** (radio/SSID, qualunque stack: pacchetto `wifi`, CAPsMAN o
   wireless legacy) con i client collegati raggruppati per radio, **attivabili/disattivabili**
