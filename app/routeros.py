@@ -677,40 +677,51 @@ class RouterOSClient:
 
     # ---------- traffico in tempo reale per client ----------
 
-    async def monitor_client_traffic(self, ip_address: Optional[str], interface: Optional[str]) -> Optional[dict]:
-        """Traffico istantaneo di un singolo client, via /tool/torch filtrato per IP.
+    @staticmethod
+    def _torch_flow_ip(value: Optional[str]) -> str:
+        """I campi src-address/dst-address di un flow torch sono "ip:porta" (o "ip/mask"
+        per alcuni protocolli): normalizza alla sola parte IP per confrontarla col client."""
+        return (value or "").split("/", 1)[0].split(":", 1)[0]
 
-        RouterOS non tiene contatori per-client: usiamo torch sull'interfaccia su cui il
-        client è noto (radio WiFi, o interfaccia ARP per un client cablato), sommando i
-        flussi in cui il client compare come sorgente (upload) e come destinazione
-        (download). Richiede sia l'IP che l'interfaccia: se uno dei due non è noto (es.
-        client visto solo via ARP su un'interfaccia bridge sconosciuta) non è possibile
-        stimare il traffico in modo affidabile -> None, non un errore.
+    async def monitor_client_traffic(self, ip_address: Optional[str], interface: Optional[str]) -> Optional[dict]:
+        """Traffico istantaneo di un singolo client, via /tool/torch sull'interfaccia su cui
+        è noto (radio WiFi, o interfaccia ARP per un client cablato).
+
+        RouterOS non tiene contatori per-client: torch è uno strumento diagnostico pensato
+        per uno streaming continuo (come /tool/ping o /tool/bandwidth-test), non per una
+        singola lettura "once" come /interface/monitor-traffic — su REST API va quindi fatto
+        girare per una durata esplicita (qui 1s) e leggere il campione risultante, non
+        richiesto con once=yes (che per torch non ha alcun effetto documentato: prima lo
+        usavamo e la risposta arrivava sempre vuota).
+
+        Una sola chiamata (non filtrata per IP: il filtro src/dst-address di torch è per
+        singolo indirizzo, non supporta "client X" direttamente) restituisce tutti i flussi
+        sull'interfaccia; sommiamo lato nostro quelli dove il client compare come sorgente
+        (upload, rx-bits-per-second) o destinazione (download, tx-bits-per-second).
+        Richiede sia l'IP che l'interfaccia: se uno dei due non è noto (es. client visto solo
+        via ARP su un'interfaccia bridge sconosciuta) non è possibile stimare il traffico in
+        modo affidabile -> None, non un errore.
         """
         if not ip_address or not interface:
             return None
 
-        async def _torch_sum(direction_field: str, rate_field: str) -> int:
-            try:
-                result = await self._request(
-                    "POST",
-                    "/tool/torch",
-                    json={"interface": interface, direction_field: f"{ip_address}/32", "once": "yes"},
-                )
-            except RouterOSError as exc:
-                if exc.upstream_status_code in self._OPTIONAL_MENU_STATUS_CODES:
-                    return 0
-                raise
-            return sum(int(flow.get(rate_field, 0) or 0) for flow in (result or []))
+        try:
+            result = await self._request(
+                "POST", "/tool/torch", json={"interface": interface, "duration": "1"}
+            )
+        except RouterOSError as exc:
+            if exc.upstream_status_code in self._OPTIONAL_MENU_STATUS_CODES:
+                return None
+            raise
 
-        # Due chiamate torch separate (RouterOS non ha un filtro "src OR dst" unico):
-        # - client come sorgente (src-address) -> traffico ricevuto dal router su
-        #   quell'interfaccia, cioè quanto il client sta caricando (upload)
-        # - client come destinazione (dst-address) -> traffico trasmesso dal router su
-        #   quell'interfaccia verso il client, cioè quanto sta scaricando (download)
+        upload_bps = 0
+        download_bps = 0
+        for flow in result or []:
+            if self._torch_flow_ip(flow.get("src-address")) == ip_address:
+                upload_bps += int(flow.get("rx-bits-per-second", 0) or 0)
+            if self._torch_flow_ip(flow.get("dst-address")) == ip_address:
+                download_bps += int(flow.get("tx-bits-per-second", 0) or 0)
+
         # Approssimazione ragionevole, non un contatore esatto per-client: RouterOS non ne
         # tiene uno nativo senza una coda (queue) dedicata.
-        upload_bps = await _torch_sum("src-address", "rx-bits-per-second")
-        download_bps = await _torch_sum("dst-address", "tx-bits-per-second")
-
         return {"rx_bps": download_bps, "tx_bps": upload_bps}
