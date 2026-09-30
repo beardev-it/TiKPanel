@@ -83,6 +83,15 @@ class ClientOut(BaseModel):
     mac_address: str
     ip_address: Optional[str] = None
     hostname: Optional[str] = None
+    hostname_source: Optional[str] = Field(
+        default=None,
+        description=(
+            "Da dove viene 'hostname': 'dhcp' se comunicato dal client stesso durante la "
+            "richiesta DHCP, 'comment' se è invece il commento assegnato a mano al lease su "
+            "RouterOS (usato come riserva quando il client non manda un hostname), null se "
+            "manca entrambi"
+        ),
+    )
     connection: Optional[str] = None
     blocked: Optional[bool] = None
 
@@ -102,6 +111,10 @@ class WifiClientOut(BaseModel):
     mac_address: str
     ip_address: Optional[str] = None
     hostname: Optional[str] = None
+    hostname_source: Optional[str] = Field(
+        default=None,
+        description="'dhcp' se comunicato dal client, 'comment' se è il commento assegnato a mano al lease",
+    )
     signal_strength: Optional[str] = None
     uptime: Optional[str] = None
 

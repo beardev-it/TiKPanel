@@ -77,6 +77,21 @@ function el(tag, attrs = {}, children = []) {
   return node;
 }
 
+function hostnameCell(client) {
+  // hostname_source: 'dhcp' = comunicato dal client, 'comment' = etichetta manuale sul lease
+  // (riserva quando il client non manda nulla via DHCP), assente/null = nessuna delle due.
+  if (!client.hostname) return el("span", { text: "—" });
+  const isManual = client.hostname_source === "comment";
+  return el(
+    "span",
+    isManual ? { title: "Etichetta manuale (dal commento del lease DHCP), non inviata dal client" } : {},
+    [
+      el("span", { text: client.hostname }),
+      isManual ? el("span", { class: "hostname-manual-tag", text: " (manuale)" }) : null,
+    ].filter(Boolean)
+  );
+}
+
 function escapeHtml(str) {
   const d = document.createElement("div");
   d.textContent = str;
@@ -797,7 +812,10 @@ function buildClientCheckbox(mac, set = selection.clients, onChange = updateClie
 
 function buildWifiClientRow(client) {
   lastClientsByMac.set(client.mac_address, client);
-  const sub = [client.hostname, client.ip_address].filter(Boolean).join(" · ");
+  const hostnameLabel = client.hostname
+    ? client.hostname + (client.hostname_source === "comment" ? " (manuale)" : "")
+    : "";
+  const sub = [hostnameLabel, client.ip_address].filter(Boolean).join(" · ");
   const trafficCell = trafficPlaceholder();
   pollTraffic(clientTrafficKey(client), clientTrafficFetcher(client), trafficCell);
 
@@ -979,7 +997,7 @@ function renderWiredClients(clients) {
         el("td", {}, [buildClientCheckbox(client.mac_address, selection.wiredClients, updateWiredBulkBar)]),
         el("td", { text: client.mac_address }),
         el("td", { text: client.ip_address || "—" }),
-        el("td", { text: client.hostname || "—" }),
+        el("td", {}, [hostnameCell(client)]),
         el("td", {}, [blockedBadge]),
         el("td", {}, [trafficCell]),
         el("td", {}, [blockBtn]),

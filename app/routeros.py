@@ -257,6 +257,22 @@ class RouterOSClient:
                 return []
             raise
 
+    @staticmethod
+    def _lease_hostname(lease: dict) -> tuple[Optional[str], Optional[str]]:
+        """Hostname da mostrare per un client, con una riserva quando RouterOS non ne ha
+        ricevuto uno dal client via DHCP (host-name vuoto: dispositivo che non lo invia,
+        randomizzazione privacy, IP statico, lease creato a mano...). In quel caso usiamo il
+        commento del lease, se l'amministratore ne ha assegnato uno manualmente in RouterOS —
+        non è "letto" dal client, è un'etichetta scelta da chi gestisce il router.
+        Ritorna (hostname, source) dove source è 'dhcp' o 'comment' (None se non c'è nulla)."""
+        host_name = (lease.get("host-name") or "").strip()
+        if host_name:
+            return host_name, "dhcp"
+        comment = (lease.get("comment") or "").strip()
+        if comment:
+            return comment, "comment"
+        return None, None
+
     async def list_clients(self) -> list[dict]:
         """Vista unificata dei client noti: incrocia lease DHCP, ARP e tabelle wireless."""
         leases = await self.list_dhcp_leases()
@@ -276,10 +292,12 @@ class RouterOSClient:
             if not mac:
                 continue
             entry = by_mac.setdefault(mac, {"mac_address": mac})
+            hostname, hostname_source = self._lease_hostname(lease)
             entry.update(
                 {
                     "ip_address": lease.get("address"),
-                    "hostname": lease.get("host-name"),
+                    "hostname": hostname,
+                    "hostname_source": hostname_source,
                     "dhcp_status": lease.get("status"),
                     "dhcp_lease_id": lease.get(".id"),
                     "dhcp_disabled": lease.get("disabled") == "true",
@@ -594,11 +612,13 @@ class RouterOSClient:
                 continue
             mac = (reg.get("mac-address") or "").upper()
             lease = lease_by_mac.get(mac, {})
+            hostname, hostname_source = self._lease_hostname(lease)
             by_radio.setdefault(iface, []).append(
                 {
                     "mac_address": mac,
                     "ip_address": lease.get("address"),
-                    "hostname": lease.get("host-name"),
+                    "hostname": hostname,
+                    "hostname_source": hostname_source,
                     "signal_strength": reg.get("signal-strength"),
                     "uptime": reg.get("uptime"),
                 }
