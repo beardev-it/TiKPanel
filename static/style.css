@@ -315,7 +315,7 @@ main { padding: 24px 28px 48px; max-width: 1080px; margin: 0 auto; }
   border-radius: var(--radius);
   box-shadow: var(--shadow);
 }
-.inline-form input {
+.inline-form input, .inline-form select {
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text);
@@ -323,9 +323,9 @@ main { padding: 24px 28px 48px; max-width: 1080px; margin: 0 auto; }
   border-radius: var(--radius-sm);
   font-size: 13px;
 }
-.inline-form input:focus { outline: none; border-color: var(--accent); }
+.inline-form input:focus, .inline-form select:focus { outline: none; border-color: var(--accent); }
 .inline-form input[name="name"] { flex: 2; min-width: 160px; }
-.inline-form input[name="interface"] { flex: 1; min-width: 120px; }
+.inline-form select[name="interface"] { flex: 1; min-width: 160px; }
 .inline-form input[name="comment"] { flex: 2; min-width: 140px; }
 .inline-form input[name="vlan_id"] { width: 100px; }
 

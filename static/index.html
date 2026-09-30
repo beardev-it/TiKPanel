@@ -107,7 +107,9 @@
       <form id="vlanCreateForm" class="inline-form">
         <input type="text" name="name" placeholder="nome (es. vlan100-ospiti)" required />
         <input type="number" name="vlan_id" placeholder="VLAN ID" min="1" max="4094" required />
-        <input type="text" name="interface" placeholder="interfaccia (es. bridge1)" required />
+        <select name="interface" id="vlanInterfaceSelect" required>
+          <option value="" disabled selected>interfaccia…</option>
+        </select>
         <input type="text" name="comment" placeholder="commento (opzionale)" />
         <button type="submit" class="btn btn-primary">Crea VLAN</button>
       </form>

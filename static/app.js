@@ -351,8 +351,43 @@ document.getElementById("refreshInterfaces").addEventListener("click", loadInter
 
 // ---------- VLAN ----------
 
+async function loadVlanInterfaceOptions() {
+  const select = document.getElementById("vlanInterfaceSelect");
+  const previousValue = select.value;
+  try {
+    const interfaces = await api("/interfaces");
+    // Una VLAN si aggancia a un'interfaccia "fisica" (ethernet, bridge, bonding, wireless...):
+    // escludiamo le VLAN stesse dall'elenco, altrimenti si potrebbero impilare all'infinito
+    // creando confusione (RouterOS lo permetterebbe tecnicamente, ma non è un caso d'uso comune).
+    const options = interfaces
+      .filter((iface) => iface.type !== "vlan")
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    select.innerHTML = "";
+    if (!options.length) {
+      select.appendChild(el("option", { value: "", disabled: "", selected: "", text: "nessuna interfaccia disponibile" }));
+      return;
+    }
+    select.appendChild(el("option", { value: "", disabled: "", text: "interfaccia…" }));
+    for (const iface of options) {
+      const label = iface.type ? `${iface.name} (${iface.type})` : iface.name;
+      select.appendChild(el("option", { value: iface.name, text: label }));
+    }
+    // ripristina la selezione precedente se ancora presente (es. dopo un refresh manuale)
+    if (previousValue && options.some((i) => i.name === previousValue)) {
+      select.value = previousValue;
+    } else {
+      select.value = "";
+    }
+  } catch (err) {
+    select.innerHTML = "";
+    select.appendChild(el("option", { value: "", disabled: "", selected: "", text: "errore nel caricamento interfacce" }));
+  }
+}
+
 async function loadVlans() {
   stopAllPolling();
+  loadVlanInterfaceOptions();
   const body = document.getElementById("vlansBody");
   body.innerHTML = `<tr><td colspan="7" class="empty">Caricamento…</td></tr>`;
   try {
