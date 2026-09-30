@@ -229,6 +229,21 @@ Se il sospetto è la password, resettala esplicitamente con `/user set ... passw
 riprova — evita temporaneamente caratteri come `!`/`` ` ``/`$` nei test diagnostici per
 escludere problemi di escaping nella catena di comandi.
 
+### `500 Internal Server Error` — `not enough permissions (9)` su `/tool/torch`
+
+Il traffico in tempo reale dei client resta bloccato su "n/d" o non si aggiorna mai (il log
+di RouterOS mostra `RouterOS ha risposto 500 per POST /tool/torch: {'detail': 'not enough
+permissions (9)', ...}`). Il gruppo `api-group` non ha il permesso **`test`**, richiesto da
+RouterOS per `/tool/torch` e per gli altri strumenti diagnostici (ping, bandwidth-test,
+traceroute...) — senza, la REST API rifiuta la richiesta con un errore che sembra un
+problema del server (500) invece che di permessi. `tikpanel-full-setup.rsc` e
+`router-setup.rsc` lo includono di default dalle versioni più recenti; per
+un'installazione già fatta con uno script precedente, aggiungilo a mano:
+```
+/user group set api-group policy=read,write,api,rest-api,test,!local,!telnet,!ssh,!ftp,!reboot,!policy,!password,!sensitive,!romon,!dude,!tikapp,!winbox
+```
+Non serve riavviare il container: il permesso si applica dalla richiesta successiva.
+
 ### Metodo di diagnosi generale che ha funzionato
 
 Quando qualcosa non risponde, isola il problema un livello alla volta invece di ipotizzare:

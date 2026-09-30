@@ -714,17 +714,6 @@ class RouterOSClient:
                 return None
             raise
 
-        # TEMPORANEO: log diagnostico per capire il formato reale dei flussi torch su
-        # questo router (nomi dei campi, quanti flussi arrivano, come sono formattati gli
-        # indirizzi) prima di continuare a indovinare — da rimuovere una volta risolto.
-        logger.info(
-            "torch debug: interface=%s ip_cercato=%s n_flussi=%s primi_flussi=%s",
-            interface,
-            ip_address,
-            len(result or []),
-            (result or [])[:3],
-        )
-
         upload_bps = 0
         download_bps = 0
         for flow in result or []:

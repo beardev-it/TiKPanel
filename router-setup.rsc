@@ -46,10 +46,17 @@
 :log info "TiKPanel: www-ssl abilitato con certificato, www (http) disabilitato"
 
 # ---- 3. Gruppo e utente API dedicato -----------------------------------------
+# NOTA: "test" è necessario per /tool/torch (traffico in tempo reale dei client) e per
+# gli altri strumenti diagnostici di RouterOS (ping, bandwidth-test...). Senza "test"
+# RouterOS rifiuta quelle richieste con un 500 "not enough permissions (9)".
+:local apiGroupPolicy "read,write,api,rest-api,test,!local,!telnet,!ssh,!ftp,!reboot,!policy,!password,!sensitive,!romon,!dude,!tikapp,!winbox"
+
 :if ([:len [/user group find where name=api-group]] = 0) do={
-    /user group add name=api-group \
-        policy=read,write,api,rest-api,!local,!telnet,!ssh,!ftp,!reboot,!policy,!password,!sensitive,!romon,!dude,!tikapp,!winbox
+    /user group add name=api-group policy=$apiGroupPolicy
     :log info "TiKPanel: gruppo 'api-group' creato"
+} else={
+    /user group set [find where name=api-group] policy=$apiGroupPolicy
+    :log info "TiKPanel: gruppo 'api-group' gia' presente, permessi aggiornati (incluso 'test')"
 }
 
 :if ([:len [/user find where name=$apiUser]] = 0) do={
