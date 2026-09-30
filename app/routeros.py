@@ -430,7 +430,26 @@ class RouterOSClient:
     async def unblock_client(self, mac_address: str, ip_address: Optional[str] = None) -> dict:
         for rule in await self._list_bridge_block_rules(mac_address):
             await self._request("DELETE", f"/interface/bridge/filter/{rule['.id']}")
+        await self._clear_legacy_block_leftovers(mac_address)
         return {"mac_address": mac_address, "ip_address": ip_address, "blocked": False, "method": "bridge-mac"}
+
+    async def _clear_legacy_block_leftovers(self, mac_address: str) -> None:
+        """Pulizia dei residui delle due versioni precedenti del blocco client (address-list
+        IP + drop sul forward, poi block-access sul lease DHCP), sostituite dal blocco per
+        MAC sul bridge: un client bloccato PRIMA del passaggio al nuovo meccanismo resterebbe
+        altrimenti bloccato per sempre, perché lo sblocco nuovo non tocca lease o address-list
+        e quindi non li rimuoverebbe mai da solo. Innocuo se non c'è nulla da pulire."""
+        leases = await self._list_optional_params("/ip/dhcp-server/lease", {"mac-address": mac_address})
+        for lease in leases:
+            if lease.get("block-access") == "true":
+                await self._request(
+                    "PATCH", f"/ip/dhcp-server/lease/{lease['.id']}", json={"block-access": "no"}
+                )
+
+        legacy_comment = f"TiKPanel: {mac_address}".upper()
+        for entry in await self._list_optional("/ip/firewall/address-list"):
+            if (entry.get("comment") or "").upper() == legacy_comment:
+                await self._request("DELETE", f"/ip/firewall/address-list/{entry['.id']}")
 
     async def disconnect_client(self, mac_address: str) -> dict:
         """Forza la disconnessione immediata di un client già collegato (wifi/hotspot/ARP)."""
