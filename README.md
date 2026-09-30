@@ -92,7 +92,7 @@ Variabili principali:
 | `AUTO_CREATE_FIREWALL_RULE` | Se `true`, crea automaticamente le regole firewall di drop per quella lista |
 | `USERS_FILE` | Percorso del file con utenti/ruoli della dashboard (default `/data/users.json`). Deve stare su storage persistente — vedi sotto |
 | `INITIAL_ADMIN_USERNAME` | Username del primo amministratore, creato solo se `USERS_FILE` è vuoto/assente (default `admin`) |
-| `INITIAL_ADMIN_PASSWORD` | Password del primo amministratore. **Obbligatoria al primo avvio**: senza, nessuno può fare login finché non crei un utente per altra via. Non serve più una volta creato il primo utente |
+| `INITIAL_ADMIN_PASSWORD` | Password del primo amministratore. **Obbligatoria al primo avvio**: senza, nessuno può fare login finché non crei un utente per altra via. Non serve più una volta creato il primo utente — **rimuovila dalla configurazione subito dopo** (vedi sotto), è in chiaro come ogni variabile d'ambiente |
 
 ## Dashboard web (`/ui`)
 
@@ -110,6 +110,24 @@ con `docker compose`, il file compose già include un volume dedicato (`tikpanel
 quindi sopravvive a un `docker compose up -d --build`. Sul router MikroTik, `/data` sta dentro il
 `root-dir` del container, che è già l'intero filesystem persistito sul disco esterno — nessuna
 configurazione aggiuntiva necessaria lì.
+
+### Segreti in chiaro: cosa sapere
+
+Le password **dentro** `USERS_FILE` sono salvate con hash bcrypt, mai in chiaro. Le **variabili
+d'ambiente** del container invece sono in chiaro per natura (né Docker Compose in modalità
+semplice né `/container/envs` di RouterOS le cifrano):
+
+- `INITIAL_ADMIN_PASSWORD` serve solo al primissimo avvio. Dopo che il primo amministratore è
+  stato creato (il log del container lo conferma: cerca "Primo amministratore TikPanel creato"),
+  **rimuovila** dalla configurazione:
+  - RouterOS: `/container/envs remove [find where name=tikpanel-env and key=INITIAL_ADMIN_PASSWORD]`,
+    poi riavvia il container
+  - Docker: toglila da `.env`, poi `docker compose up -d`
+- `MIKROTIK_PASSWORD`, `API_KEY`, `SECRET_KEY` restano necessarie sempre (credenziali di servizio
+  usate a ogni richiesta), quindi non si possono rimuovere allo stesso modo. Limita chi può
+  leggerle: su Docker tieni `.env` con permessi ristretti (`chmod 600 .env`, e non committarlo mai
+  — è già in `.gitignore`); su RouterOS solo chi ha accesso admin al router vede
+  `/container/envs print`, già un livello di fiducia alto.
 
 ## Avvio con Docker
 

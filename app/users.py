@@ -98,6 +98,15 @@ class UserStore:
                 username=username, password_hash=self._hash_password(password), role="amministratore"
             )
             self._write(users)
+            logger.info(
+                "Primo amministratore TikPanel creato ('%s'). INITIAL_ADMIN_PASSWORD è ora inutile "
+                "(la password è già salvata come hash in %s): per non lasciarla in chiaro nella "
+                "configurazione del container, rimuovila dalle variabili d'ambiente e riavvia "
+                "(su RouterOS: /container/envs remove [find where name=<env-list> and key=INITIAL_ADMIN_PASSWORD]; "
+                "su Docker: toglila da .env e fai 'docker compose up -d').",
+                username,
+                self._path,
+            )
 
     async def list_users(self) -> list[UserRecord]:
         async with self._lock:

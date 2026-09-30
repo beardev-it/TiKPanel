@@ -106,6 +106,15 @@ fai login con `dashboardAdminUser`/`dashboardAdminPassword` (non sono credenzial
 il primo utente della dashboard stessa, creato al primo avvio). Da lì, come amministratore, puoi
 creare altri utenti con ruolo operatore o utente dalla tab "Utenti".
 
+**Importante**: `INITIAL_ADMIN_PASSWORD` (la variabile dietro `dashboardAdminPassword`) resta in
+chiaro nella configurazione del container finché non la rimuovi — serve solo al primissimo avvio.
+Una volta confermato il login, rimuovila:
+```
+/container/envs remove [find where name=tikpanel-env and key=INITIAL_ADMIN_PASSWORD]
+/container/stop 0
+/container/start 0
+```
+
 ---
 
 ## Errori incontrati durante il setup (e come evitarli)
