@@ -288,6 +288,8 @@ async function loadWifiModuleStatus() {
 }
 
 function logout(message) {
+  stopAllPolling(); // altrimenti i poller di traffico (interfacce/VLAN/client) restano
+  // attivi in background anche da sloggato, finché non si ricarica la pagina
   state.token = "";
   state.username = "";
   state.role = "";
@@ -410,6 +412,13 @@ document.getElementById("setupAdminForm").addEventListener("submit", async (e) =
 
 // ---------- tabs ----------
 
+function loadTab(tabName) {
+  if (tabName === "interfaces") loadInterfaces();
+  if (tabName === "vlans") loadVlans();
+  if (tabName === "wifi") loadClientsAndNetworks();
+  if (tabName === "users") loadUsers();
+}
+
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => {
     document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
@@ -417,11 +426,21 @@ document.querySelectorAll(".tab").forEach((tab) => {
     tab.classList.add("active");
     document.getElementById("tab-" + tab.dataset.tab).classList.add("active");
     stopAllPolling();
-    if (tab.dataset.tab === "interfaces") loadInterfaces();
-    if (tab.dataset.tab === "vlans") loadVlans();
-    if (tab.dataset.tab === "wifi") loadClientsAndNetworks();
-    if (tab.dataset.tab === "users") loadUsers();
+    loadTab(tab.dataset.tab);
   });
+});
+
+// Mentre la scheda del browser è in background non ha senso continuare a interrogare il
+// router ogni pochi secondi per il traffico: mettiamo in pausa i poller, e li riprendiamo
+// ricaricando la tab corrente quando la scheda torna in primo piano.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    stopAllPolling();
+    return;
+  }
+  if (document.getElementById("app").classList.contains("hidden")) return; // non ancora loggati
+  const activeTab = document.querySelector(".tab.active");
+  if (activeTab) loadTab(activeTab.dataset.tab);
 });
 
 // ---------- interfacce ----------

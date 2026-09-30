@@ -63,12 +63,15 @@
 # =============================================================================
 # 2. Utente API dedicato con permessi minimi
 # =============================================================================
-# NOTA: "test" è necessario per /tool/torch (usato per il traffico in tempo reale dei
-# client) e in generale per gli strumenti diagnostici di RouterOS (ping, bandwidth-test,
-# traceroute...). Senza "test" RouterOS rifiuta quelle richieste con un 500 "not enough
-# permissions (9)" — un errore facile da scambiare per un bug del codice invece che di
-# permessi, perché la REST API lo restituisce come 500 e non come 403.
-:local apiGroupPolicy "read,write,api,rest-api,test,!local,!telnet,!ssh,!ftp,!reboot,!policy,!password,!sensitive,!romon,!dude,!tikapp,!winbox"
+# NOTA: /tool/torch (usato per il traffico in tempo reale dei client) richiede, oltre a
+# "read,write", anche i permessi "test" e "sensitive" (verificato su RouterOS 7.24.4).
+# Senza, la REST API risponde con un 500 "not enough permissions (9)" — un errore facile da
+# scambiare per un bug del codice, perché arriva come 500 e non come 403, e il numero tra
+# parentesi è sempre lo stesso a prescindere da quale permesso manchi.
+# Compromesso da conoscere: "sensitive" permette all'utente API di leggere dati sensibili
+# (es. password/chiavi in chiaro in alcune sezioni). L'utente API è dedicato e usato solo
+# da TiKPanel, ma non riutilizzarlo per altro e tieni riservate le sue credenziali.
+:local apiGroupPolicy "read,write,api,rest-api,test,sensitive,!local,!telnet,!ssh,!ftp,!reboot,!policy,!password,!romon,!dude,!tikapp,!winbox"
 
 :if ([:len [/user group find where name=api-group]] = 0) do={
     /user group add name=api-group policy=$apiGroupPolicy

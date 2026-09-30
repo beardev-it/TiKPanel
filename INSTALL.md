@@ -231,17 +231,20 @@ escludere problemi di escaping nella catena di comandi.
 
 ### `500 Internal Server Error` — `not enough permissions (9)` su `/tool/torch`
 
-Il traffico in tempo reale dei client resta bloccato su "n/d" o non si aggiorna mai (il log
+Il traffico in tempo reale dei client resta bloccato su "…" o non si aggiorna mai (il log
 di RouterOS mostra `RouterOS ha risposto 500 per POST /tool/torch: {'detail': 'not enough
-permissions (9)', ...}`). Il gruppo `api-group` non ha il permesso **`test`**, richiesto da
-RouterOS per `/tool/torch` e per gli altri strumenti diagnostici (ping, bandwidth-test,
-traceroute...) — senza, la REST API rifiuta la richiesta con un errore che sembra un
-problema del server (500) invece che di permessi. `tikpanel-full-setup.rsc` e
-`router-setup.rsc` lo includono di default dalle versioni più recenti; per
-un'installazione già fatta con uno script precedente, aggiungilo a mano:
+permissions (9)', ...}`). `/tool/torch` richiede, oltre a `read,write`, i permessi **`test`**
+e **`sensitive`** (verificato su RouterOS 7.24.4), che il gruppo `api-group` non aveva. Il
+numero tra parentesi è sempre lo stesso a prescindere da quale permesso manchi, e l'errore
+arriva come 500 e non come 403, quindi sembra un problema del server invece che di permessi.
+`tikpanel-full-setup.rsc` e `router-setup.rsc` li includono di default dalle versioni più
+recenti; per un'installazione già fatta con uno script precedente, aggiungili a mano:
 ```
-/user group set api-group policy=read,write,api,rest-api,test,!local,!telnet,!ssh,!ftp,!reboot,!policy,!password,!sensitive,!romon,!dude,!tikapp,!winbox
+/user group set api-group policy=read,write,api,rest-api,test,sensitive,!local,!telnet,!ssh,!ftp,!reboot,!policy,!password,!romon,!dude,!tikapp,!winbox
 ```
+Nota di sicurezza: `sensitive` consente all'utente API di leggere dati sensibili (es.
+password/chiavi in chiaro in alcune sezioni di RouterOS). L'utente API è dedicato a TiKPanel:
+non riutilizzarlo per altro e tieni riservate le sue credenziali.
 Non serve riavviare il container: il permesso si applica dalla richiesta successiva.
 
 ### Metodo di diagnosi generale che ha funzionato

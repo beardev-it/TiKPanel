@@ -46,10 +46,11 @@
 :log info "TiKPanel: www-ssl abilitato con certificato, www (http) disabilitato"
 
 # ---- 3. Gruppo e utente API dedicato -----------------------------------------
-# NOTA: "test" è necessario per /tool/torch (traffico in tempo reale dei client) e per
-# gli altri strumenti diagnostici di RouterOS (ping, bandwidth-test...). Senza "test"
-# RouterOS rifiuta quelle richieste con un 500 "not enough permissions (9)".
-:local apiGroupPolicy "read,write,api,rest-api,test,!local,!telnet,!ssh,!ftp,!reboot,!policy,!password,!sensitive,!romon,!dude,!tikapp,!winbox"
+# NOTA: /tool/torch (traffico in tempo reale dei client) richiede, oltre a "read,write",
+# anche i permessi "test" e "sensitive" (verificato su RouterOS 7.24.4): senza, la REST API
+# risponde 500 "not enough permissions (9)". "sensitive" permette di leggere dati sensibili:
+# usa questo utente solo per TiKPanel e tieni riservate le sue credenziali.
+:local apiGroupPolicy "read,write,api,rest-api,test,sensitive,!local,!telnet,!ssh,!ftp,!reboot,!policy,!password,!romon,!dude,!tikapp,!winbox"
 
 :if ([:len [/user group find where name=api-group]] = 0) do={
     /user group add name=api-group policy=$apiGroupPolicy
