@@ -352,7 +352,7 @@ class RouterOSClient:
             entry["hotspot_user"] = act.get("user")
 
         blocked_macs = {
-            (r.get("src-mac-address") or "").upper() for r in await self._list_bridge_block_rules()
+            self._strip_mac_mask(r.get("src-mac-address")) for r in await self._list_bridge_block_rules()
         }
         for mac, entry in by_mac.items():
             entry["blocked"] = mac in blocked_macs
@@ -374,10 +374,26 @@ class RouterOSClient:
     # Un blocco completo richiede entrambe; senza "forward" il client bloccato potrebbe
     # ancora raggiungere altri host sulla stessa LAN senza passare dal gateway.
     _BRIDGE_BLOCK_CHAINS = ("input", "forward")
+    # RouterOS vuole sempre una maschera esplicita su src-mac-address/dst-mac-address quando
+    # la regola viene creata via API o script ("invalid value for argument src-mac-address"
+    # senza): WinBox la aggiunge da sola (di default /48, cioè "match esatto"), ma la REST
+    # API no. /FF:FF:FF:FF:FF:FF è la maschera a 48 bit: match sul MAC esatto, nessun range.
+    _MAC_EXACT_MASK = "FF:FF:FF:FF:FF:FF"
 
     @staticmethod
     def _bridge_block_comment(mac_address: str) -> str:
         return f"TikPanel: blocca client {mac_address.upper()}"
+
+    @classmethod
+    def _mac_with_exact_mask(cls, mac_address: str) -> str:
+        return f"{mac_address}/{cls._MAC_EXACT_MASK}"
+
+    @staticmethod
+    def _strip_mac_mask(value: Optional[str]) -> str:
+        """RouterOS restituisce src-mac-address/dst-mac-address con la maschera inclusa
+        (es. "AA:BB:CC:DD:EE:FF/FF:FF:FF:FF:FF:FF"): per confrontarlo con un MAC "nudo"
+        va tolta la parte dopo la "/"."""
+        return (value or "").split("/", 1)[0].upper()
 
     async def _list_bridge_block_rules(self, mac_address: Optional[str] = None) -> list[dict]:
         rules = await self._list_optional("/interface/bridge/filter")
@@ -405,7 +421,7 @@ class RouterOSClient:
                 json={
                     "chain": chain,
                     "action": "drop",
-                    "src-mac-address": mac_address,
+                    "src-mac-address": self._mac_with_exact_mask(mac_address),
                     "comment": comment,
                 },
             )
@@ -592,7 +608,7 @@ class RouterOSClient:
                 lease_by_mac[mac] = lease
 
         blocked_macs = {
-            (r.get("src-mac-address") or "").upper() for r in await self._list_bridge_block_rules()
+            self._strip_mac_mask(r.get("src-mac-address")) for r in await self._list_bridge_block_rules()
         }
 
         by_radio: dict[str, list[dict]] = {}
