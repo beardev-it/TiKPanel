@@ -122,11 +122,16 @@ amministratore. Da quel momento:
 - le credenziali `INITIAL_ADMIN_*` smettono immediatamente di funzionare, anche senza riavviare il
   container — puoi rimuoverle dalla configurazione quando vuoi.
 
-**Persistenza**: gli utenti sono salvati in `USERS_FILE` dentro il container. Su un host esterno
-con `docker compose`, il file compose già include un volume dedicato (`tikpanel-data:/data`),
-quindi sopravvive a un `docker compose up -d --build`. Sul router MikroTik, `/data` sta dentro il
-`root-dir` del container, che è già l'intero filesystem persistito sul disco esterno — nessuna
-configurazione aggiuntiva necessaria lì.
+**Persistenza**: gli utenti sono salvati in `USERS_FILE` dentro il container.
+
+- Su un host esterno con `docker compose`, il file compose già include un volume dedicato
+  (`tikpanel-data:/data`), quindi sopravvive a un `docker compose up -d --build`.
+- Sul router MikroTik, **serve un mount dedicato** (`/container/mounts`, già incluso in
+  `tikpanel-full-setup.rsc`): `root-dir` non basta, perché viene interamente ri-estratto
+  dall'immagine ad ogni `/container/repull` (aggiornamento) — qualunque cosa scritta lì
+  dall'app, incluso `users.json`, andrebbe persa a ogni update. Un mount separato invece non fa
+  parte dell'immagine e il repull non lo tocca. Vedi INSTALL.md per l'installazione da zero e
+  per la migrazione di un'installazione esistente creata prima di questo mount.
 
 ### Blocco client per MAC address (firewall del bridge)
 

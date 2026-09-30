@@ -100,6 +100,24 @@
 :log info "TiKPanel: registry-url e tmpdir configurati"
 
 # =============================================================================
+# 4bis. Mount persistente per i dati di TiKPanel (utenti/ruoli)
+# =============================================================================
+# IMPORTANTE: root-dir viene interamente ri-estratto dall'immagine ad ogni
+# /container/repull (aggiornamento a una nuova versione): qualunque cosa scritta
+# lì dall'app in esecuzione (come /data/users.json, creato al primo login) andrebbe
+# persa ad ogni aggiornamento. Un mount dedicato invece vive FUORI dal root-dir e
+# non fa parte dell'immagine, quindi il repull non lo tocca.
+:local dataMountName "tikpanel-data"
+:local dataMountSrc ($diskSlot . "/containers/tikpanel-data")
+
+:if ([:len [/container/mounts find where name=$dataMountName]] = 0) do={
+    /container/mounts add name=$dataMountName src=$dataMountSrc dst="/data"
+    :log info ("TiKPanel: mount persistente '" . $dataMountName . "' creato (" . $dataMountSrc . " -> /data)")
+} else={
+    :log info ("TiKPanel: mount persistente '" . $dataMountName . "' gia' presente, salto")
+}
+
+# =============================================================================
 # 5. Variabili d'ambiente del container (equivalenti al file .env)
 # =============================================================================
 :if ([:len [/container/envs find where name=$envListName]] > 0) do={
@@ -122,10 +140,10 @@
 # =============================================================================
 :if ([:len [/container find where root-dir=$containerRootDir]] = 0) do={
     /container/add remote-image=$image interface=$vethName root-dir=$containerRootDir \
-        envlist=$envListName logging=yes
+        mounts=$dataMountName envlist=$envListName logging=yes
     :log info "TiKPanel: container aggiunto, pull immagine in corso..."
 } else={
-    :log warning "TiKPanel: un container con questo root-dir esiste gia', non ricreato"
+    :log warning "TiKPanel: un container con questo root-dir esiste gia', non ricreato (se veniva da una installazione precedente senza il mount persistente, vedi INSTALL.md per la migrazione)"
 }
 
 :delay 3s

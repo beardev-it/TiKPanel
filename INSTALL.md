@@ -118,6 +118,56 @@ volta completato il setup, rimuovila:
 /container/start 0
 ```
 
+## Aggiornare il container senza perdere gli utenti
+
+`tikpanel-full-setup.rsc` crea un **mount persistente** (`/container/mounts`) per `/data`,
+separato dal `root-dir` del container. È necessario perché `root-dir` viene interamente
+ri-estratto dall'immagine ad ogni `/container/repull`: qualunque cosa scritta lì dall'app in
+esecuzione — incluso `users.json`, con gli utenti della dashboard — andrebbe persa a ogni
+aggiornamento. Il mount invece non fa parte dell'immagine, quindi sopravvive.
+
+Con questo mount configurato, aggiornare è sicuro:
+```
+/container/stop 0
+/container/repull 0
+/container/start 0
+```
+
+### Hai già un'installazione senza il mount?
+
+Se hai installato TiKPanel prima che questo mount esistesse (o se hai già perso gli utenti dopo
+un repull), va migrata una volta sola:
+
+1. **Salva gli utenti attuali** (se ti interessano): apri WinBox → Files, naviga fino a
+   `<tuo-disco>/containers/tikpanel/data/users.json` (il percorso dentro il `root-dir` esistente)
+   e scaricalo sul tuo PC — oppure segna semplicemente username/ruoli da ricreare a mano dopo,
+   se sono pochi (le password non sono comunque recuperabili, sono hash: dovrai reimpostarle).
+2. **Crea il mount e collegalo al container esistente**:
+   ```
+   /container/mounts add name=tikpanel-data src=<tuo-disco>/containers/tikpanel-data dst=/data
+   /container/stop 0
+   /container/set 0 mounts=tikpanel-data
+   ```
+   Se la tua versione di RouterOS non permette di modificare `mounts` su un container già
+   creato (`/container/set` rifiuta), rimuovi il container e ricrealo da capo:
+   ```
+   /container/remove 0
+   ```
+   poi rilancia `tikpanel-full-setup.rsc` (ha già il mount incluso: i passi già fatti, come
+   certificato e utente API, vengono rilevati e saltati automaticamente).
+3. **Ripristina il file** (se salvato al passo 1): tramite WinBox → Files, copia lo
+   `users.json` salvato dentro `<tuo-disco>/containers/tikpanel-data/users.json` (il nuovo
+   percorso del mount, ancora vuoto a questo punto).
+4. **Riavvia**:
+   ```
+   /container/start 0
+   ```
+   Se non hai ripristinato nessun file al passo 3, al primo accesso la dashboard chiederà di
+   nuovo il setup dell'amministratore (con le credenziali `INITIAL_ADMIN_*`, se ancora presenti
+   nelle variabili d'ambiente — altrimenti vanno riaggiunte prima di riavviare).
+
+Da questo momento in poi, `/container/repull` non tocca più `/data`.
+
 ---
 
 ## Errori incontrati durante il setup (e come evitarli)
