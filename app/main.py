@@ -391,7 +391,7 @@ async def wifi_module_status() -> WifiModuleStatusOut:
     "/clients/block",
     tags=["client"],
     dependencies=[Depends(require_api_key)],
-    summary="Blocca il traffico di un client (address-list + firewall drop, lease DHCP disabilitato)",
+    summary="Blocca un client per MAC address (drop sul firewall del bridge, chain input+forward)",
 )
 async def block_client(body: ClientBlockIn) -> dict:
     return await get_client().block_client(body.mac_address, body.ip_address)

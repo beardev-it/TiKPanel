@@ -117,6 +117,7 @@ class WifiClientOut(BaseModel):
     )
     signal_strength: Optional[str] = None
     uptime: Optional[str] = None
+    blocked: Optional[bool] = None
 
     model_config = {"extra": "allow"}
 

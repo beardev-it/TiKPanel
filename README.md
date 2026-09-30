@@ -13,10 +13,11 @@ Cosa si può fare dalla dashboard (o via API):
 - abilitare/disabilitare interfacce fisiche e virtuali
 - creare, modificare, eliminare **VLAN** (`interface/vlan`)
 - vedere i **client collegati** (DHCP, ARP, WiFi/CAPsMAN, Hotspot)
-- **bloccare** il traffico di un client (address-list + regole firewall + lease DHCP — se il
-  lease del client è ancora dinamico, RouterOS non permette di modificarlo direttamente:
-  TikPanel lo rende prima statico automaticamente, il che significa che quel client mantiene
-  da quel momento sempre lo stesso IP, anche dopo uno sblocco)
+- **bloccare** un client per **MAC address** sul firewall del bridge (`/interface/bridge/filter`,
+  chain `input` + `forward`, drop) — a livello 2, prima di qualunque cosa arrivi allo stack IP:
+  non tocca lease DHCP né richiede un IP noto, funziona anche con IP statico o senza lease.
+  Serve un'interfaccia bridge sul router (il caso comune per la LAN); su una LAN instradata
+  senza bridging il blocco per MAC non ha effetto
 - **forzare la disconnessione** di un client già collegato (kick da WiFi/CAPsMAN/Hotspot, pulizia ARP)
 - vedere le **reti WiFi configurate** (radio/SSID, qualunque stack: pacchetto `wifi`, CAPsMAN o
   wireless legacy) con i client collegati raggruppati per radio, **attivabili/disattivabili**
@@ -94,8 +95,6 @@ Variabili principali:
 | `SECRET_KEY` | **Obbligatoria.** Firma i token di sessione (JWT) rilasciati dal login della dashboard `/ui`. Deve essere diversa da `API_KEY`, lunga e casuale (es. `openssl rand -hex 32`). Senza questa variabile il container non si avvia. |
 | `SESSION_EXPIRE_MINUTES` | Durata della sessione dopo il login nella dashboard (default `480`, cioè 8 ore) |
 | `PUBLIC_BASE_URL` | URL base che il frontend usa per parlare col servizio. Lascia vuoto se la dashboard è servita dallo stesso container (caso normale) |
-| `BLOCK_ADDRESS_LIST` | Nome della address-list RouterOS usata per bloccare i client |
-| `AUTO_CREATE_FIREWALL_RULE` | Se `true`, crea automaticamente le regole firewall di drop per quella lista |
 | `USERS_FILE` | Percorso del file con utenti/ruoli della dashboard (default `/data/users.json`). Deve stare su storage persistente — vedi sotto |
 | `INITIAL_ADMIN_USERNAME` | Username delle credenziali di bootstrap, usate solo se `USERS_FILE` è vuoto/assente per sbloccare la schermata obbligatoria di creazione del vero amministratore (default `admin`) |
 | `INITIAL_ADMIN_PASSWORD` | Password di bootstrap. **Obbligatoria al primo avvio**: senza, nessuno può fare login finché non crei un utente per altra via. Non crea da sola un utente: al login la dashboard obbliga a scegliere nome utente e password del vero amministratore, poi questa variabile smette subito di funzionare — **rimuovila dalla configurazione dopo il setup** (vedi sotto), è in chiaro come ogni variabile d'ambiente |
@@ -128,6 +127,24 @@ con `docker compose`, il file compose già include un volume dedicato (`tikpanel
 quindi sopravvive a un `docker compose up -d --build`. Sul router MikroTik, `/data` sta dentro il
 `root-dir` del container, che è già l'intero filesystem persistito sul disco esterno — nessuna
 configurazione aggiuntiva necessaria lì.
+
+### Blocco client per MAC address (firewall del bridge)
+
+Il pulsante "Blocca" (dashboard o `POST /clients/block`) non tocca il lease DHCP: aggiunge due
+regole su `/interface/bridge/filter`, entrambe `action=drop` sul MAC del client:
+
+- chain `input` — scarta tutto ciò che il client manda verso il router stesso (internet, altre
+  VLAN, qualunque traffico instradato)
+- chain `forward` — scarta anche la comunicazione diretta con altri host sulla stessa LAN
+  (bridge), senza passare dal router
+
+Le regole sono taggate con un commento (`TikPanel: blocca client <MAC>`) e "Sblocca" le rimuove
+entrambe. Funziona indipendentemente da come il client ottiene l'indirizzo IP (dinamico,
+statico, o nessun lease affatto) e non ha nessun effetto collaterale persistente sul DHCP.
+
+**Requisito**: il router deve avere il client dietro un'interfaccia **bridge** (il caso comune:
+porte LAN + WiFi locale bridgiate insieme). Su una LAN instradata senza bridging il blocco per
+MAC non ha alcun bridge su cui applicarsi e non blocca nulla — è un caso raro, non gestito qui.
 
 ### Segreti in chiaro: cosa sapere
 

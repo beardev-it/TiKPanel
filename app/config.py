@@ -50,16 +50,6 @@ class Settings(BaseSettings):
     # Valorizzalo solo se la dashboard viene servita da un host diverso dal backend.
     public_base_url: str = Field("", description="URL base dell'API per il frontend, vuoto = stessa origine")
 
-    # Comportamento del blocco client
-    block_address_list: str = Field(
-        "supervisortik-blocked",
-        description="Nome della address-list RouterOS usata per bloccare il traffico dei client",
-    )
-    auto_create_firewall_rule: bool = Field(
-        True,
-        description="Crea automaticamente le regole firewall che scartano il traffico della address-list di blocco",
-    )
-
     log_level: str = Field("INFO")
 
 

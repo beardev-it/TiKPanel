@@ -301,7 +301,6 @@ class RouterOSClient:
                     "dhcp_status": lease.get("status"),
                     "dhcp_lease_id": lease.get(".id"),
                     "dhcp_disabled": lease.get("disabled") == "true",
-                    "blocked": lease.get("block-access") == "true",
                 }
             )
 
@@ -352,114 +351,70 @@ class RouterOSClient:
             entry["hotspot_active_id"] = act.get(".id")
             entry["hotspot_user"] = act.get("user")
 
+        blocked_macs = {
+            (r.get("src-mac-address") or "").upper() for r in await self._list_bridge_block_rules()
+        }
+        for mac, entry in by_mac.items():
+            entry["blocked"] = mac in blocked_macs
+
         return list(by_mac.values())
 
-    async def _ensure_block_list_rule(self) -> None:
-        """Crea (se assenti) le regole firewall che scartano il traffico della address-list di blocco."""
-        list_name = self.settings.block_address_list
-        existing_forward = await self._request(
-            "GET",
-            "/ip/firewall/filter",
-            params={"src-address-list": list_name, "chain": "forward"},
-        )
-        if not existing_forward:
-            await self._request(
-                "PUT",
-                "/ip/firewall/filter",
-                json={
-                    "chain": "forward",
-                    "src-address-list": list_name,
-                    "action": "drop",
-                    "comment": f"TiKPanel: blocca client in {list_name}",
-                },
-            )
-        existing_forward_dst = await self._request(
-            "GET",
-            "/ip/firewall/filter",
-            params={"dst-address-list": list_name, "chain": "forward"},
-        )
-        if not existing_forward_dst:
-            await self._request(
-                "PUT",
-                "/ip/firewall/filter",
-                json={
-                    "chain": "forward",
-                    "dst-address-list": list_name,
-                    "action": "drop",
-                    "comment": f"TiKPanel: blocca client in {list_name} (risposte)",
-                },
-            )
+    # Blocco client via MAC address, a livello 2, sul firewall del bridge — non tocca IP,
+    # lease DHCP o address-list: funziona a prescindere da come il client ottiene l'IP
+    # (dinamico, statico, o anche senza affatto un lease), e non ha effetti collaterali
+    # persistenti come rendere statico un lease.
+    #
+    # RouterOS espone due chain rilevanti su /interface/bridge/filter:
+    # - "input": pacchetti il cui MAC di destinazione è il bridge stesso, cioè TUTTO il
+    #   traffico che il client manda verso il gateway (quindi anche instradato: internet,
+    #   altre VLAN...) — bloccarlo qui lo scarta PRIMA che raggiunga lo stack IP.
+    # - "forward": pacchetti scambiati direttamente fra due host sulla stessa bridge (L2
+    #   puro, senza passare dal router) — serve a impedire anche la comunicazione diretta
+    #   con altri dispositivi sulla stessa rete locale.
+    # Un blocco completo richiede entrambe; senza "forward" il client bloccato potrebbe
+    # ancora raggiungere altri host sulla stessa LAN senza passare dal gateway.
+    _BRIDGE_BLOCK_CHAINS = ("input", "forward")
 
-    async def _make_lease_static(self, mac_address: str, lease_id: str) -> str:
-        """RouterOS rifiuta qualunque modifica diretta su un lease dinamico ("failure: can not
-        change dynamic lease"): l'unico modo per impostare block-access su un client il cui IP
-        arriva da un lease dinamico è prima renderlo statico, con l'azione make-static esposta
-        dalla REST API come POST su .../lease/make-static. La conversione può cambiare l'.id
-        interno del lease, quindi dopo va ricercato di nuovo per mac-address.
-        Nota collaterale (comunicata anche in UI): da quel momento il lease resta statico per
-        sempre, anche dopo uno sblocco — non è annullabile automaticamente, è il prezzo per poter
-        bloccare quel client in modo persistente invece che al prossimo rinnovo del lease."""
-        try:
-            await self._request("POST", "/ip/dhcp-server/lease/make-static", json={".id": lease_id})
-        except RouterOSError as exc:
-            # Se nel frattempo il lease è già diventato statico (es. richiesta doppia/corsa),
-            # RouterOS risponde con un errore qui ma va bene procedere lo stesso: lo rileggiamo
-            # sotto e la PATCH successiva funzionerà normalmente su un lease ormai statico. Se
-            # invece il problema è un altro, lo segnaliamo in log ma proviamo comunque a
-            # continuare: la PATCH successiva darà un errore chiaro se il lease non è utilizzabile.
-            logger.warning("make-static sul lease %s (mac %s) non riuscita: %s", lease_id, mac_address, exc)
+    @staticmethod
+    def _bridge_block_comment(mac_address: str) -> str:
+        return f"TikPanel: blocca client {mac_address.upper()}"
 
-        refreshed = await self._list_optional_params("/ip/dhcp-server/lease", {"mac-address": mac_address})
-        for lease in refreshed:
-            if (lease.get("mac-address") or "").upper() == mac_address.upper():
-                return lease.get(".id", lease_id)
-        return lease_id
-
-    async def _set_leases_block_access(self, mac_address: str, *, blocked: bool) -> None:
-        leases = await self._list_optional_params("/ip/dhcp-server/lease", {"mac-address": mac_address})
-        for lease in leases:
-            lease_id = lease.get(".id")
-            if blocked and lease.get("dynamic") == "true":
-                lease_id = await self._make_lease_static(mac_address, lease_id)
-            await self._request(
-                "PATCH", f"/ip/dhcp-server/lease/{lease_id}", json={"block-access": "yes" if blocked else "no"}
-            )
+    async def _list_bridge_block_rules(self, mac_address: Optional[str] = None) -> list[dict]:
+        rules = await self._list_optional("/interface/bridge/filter")
+        prefix = "TikPanel: blocca client "
+        matching = [r for r in rules if (r.get("comment") or "").startswith(prefix)]
+        if mac_address is None:
+            return matching
+        comment = self._bridge_block_comment(mac_address)
+        return [r for r in matching if r.get("comment") == comment]
 
     async def block_client(self, mac_address: str, ip_address: Optional[str] = None) -> dict:
-        """Blocca un client: address-list + drop firewall, opzionale disabilitazione lease DHCP."""
-        list_name = self.settings.block_address_list
-
-        if self.settings.auto_create_firewall_rule:
-            await self._ensure_block_list_rule()
-
-        if ip_address:
-            existing = await self._request(
-                "GET", "/ip/firewall/address-list", params={"list": list_name, "address": ip_address}
+        """Blocca un client per MAC address sul firewall del bridge (chain input + forward,
+        drop): non richiede né modifica il lease DHCP, funziona anche per client con IP
+        statico o senza lease. Se il router non ha nessuna interfaccia bridge (LAN instradata
+        senza bridging), queste rule non hanno alcun bridge su cui applicarsi e non bloccano
+        nulla: in quel caso serve un'altra strategia (fuori dai casi comuni, non gestita qui)."""
+        comment = self._bridge_block_comment(mac_address)
+        existing_chains = {r.get("chain") for r in await self._list_bridge_block_rules(mac_address)}
+        for chain in self._BRIDGE_BLOCK_CHAINS:
+            if chain in existing_chains:
+                continue
+            await self._request(
+                "PUT",
+                "/interface/bridge/filter",
+                json={
+                    "chain": chain,
+                    "action": "drop",
+                    "src-mac-address": mac_address,
+                    "comment": comment,
+                },
             )
-            if not existing:
-                await self._request(
-                    "PUT",
-                    "/ip/firewall/address-list",
-                    json={"list": list_name, "address": ip_address, "comment": f"TiKPanel: {mac_address}"},
-                )
-
-        await self._set_leases_block_access(mac_address, blocked=True)
-
-        return {"mac_address": mac_address, "ip_address": ip_address, "blocked": True, "address_list": list_name}
+        return {"mac_address": mac_address, "ip_address": ip_address, "blocked": True, "method": "bridge-mac"}
 
     async def unblock_client(self, mac_address: str, ip_address: Optional[str] = None) -> dict:
-        list_name = self.settings.block_address_list
-
-        if ip_address:
-            existing = await self._request(
-                "GET", "/ip/firewall/address-list", params={"list": list_name, "address": ip_address}
-            )
-            for item in existing or []:
-                await self._request("DELETE", f"/ip/firewall/address-list/{item['.id']}")
-
-        await self._set_leases_block_access(mac_address, blocked=False)
-
-        return {"mac_address": mac_address, "ip_address": ip_address, "blocked": False, "address_list": list_name}
+        for rule in await self._list_bridge_block_rules(mac_address):
+            await self._request("DELETE", f"/interface/bridge/filter/{rule['.id']}")
+        return {"mac_address": mac_address, "ip_address": ip_address, "blocked": False, "method": "bridge-mac"}
 
     async def disconnect_client(self, mac_address: str) -> dict:
         """Forza la disconnessione immediata di un client già collegato (wifi/hotspot/ARP)."""
@@ -636,6 +591,10 @@ class RouterOSClient:
             if mac:
                 lease_by_mac[mac] = lease
 
+        blocked_macs = {
+            (r.get("src-mac-address") or "").upper() for r in await self._list_bridge_block_rules()
+        }
+
         by_radio: dict[str, list[dict]] = {}
         for reg in wireless_regs + capsman_regs + wifi_regs:
             iface = reg.get("interface")
@@ -652,6 +611,7 @@ class RouterOSClient:
                     "hostname_source": hostname_source,
                     "signal_strength": reg.get("signal-strength"),
                     "uptime": reg.get("uptime"),
+                    "blocked": mac in blocked_macs,
                 }
             )
 
