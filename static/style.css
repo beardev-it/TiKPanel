@@ -149,6 +149,20 @@ body {
 .dot-ok { background: var(--up); }
 .dot-error { background: var(--down); }
 
+/* Badge "moduli installati" in testata: un led verde/rosso per ciascun driver WiFi. */
+.module-badges {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-left: 4px;
+  border-left: 1px solid var(--border);
+}
+.module-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .theme-toggle {
   display: inline-flex;
   align-items: center;
@@ -270,6 +284,20 @@ main { padding: 24px 28px 48px; max-width: 1080px; margin: 0 auto; }
 .badge-up { background: var(--up-soft); color: var(--up); }
 .badge-down { background: var(--down-soft); color: var(--down); }
 .badge-neutral { background: var(--bg-soft); color: var(--text-muted); }
+
+/* Tag che distingue lo stack WiFi di una radio: nuovo pacchetto 'wifi' (accent) vs
+   wireless/CAPsMAN legacy (warn) — colori diversi da badge-up/down per non confonderli
+   con lo stato acceso/spento della rete. */
+.tag {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+.tag.stack-new { background: var(--accent-soft); color: var(--accent); }
+.tag.stack-legacy { background: var(--warn-soft); color: var(--warn); }
 
 .inline-form {
   display: flex;

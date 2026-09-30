@@ -29,6 +29,14 @@
     <div class="conn-status">
       <span id="connDot" class="dot dot-unknown"></span>
       <span id="connText">non connesso</span>
+      <span id="moduleBadges" class="module-badges hidden">
+        <span class="module-badge" title="Driver WiFi legacy (/interface/wireless)">
+          <span id="wirelessModuleDot" class="dot dot-unknown"></span> Wireless
+        </span>
+        <span class="module-badge" title="Nuovo driver WiFi (/interface/wifi, RouterOS >= 7.13)">
+          <span id="wifiModuleDot" class="dot dot-unknown"></span> WiFi
+        </span>
+      </span>
       <span id="userBadge" class="user-badge hidden"></span>
       <button id="btnLogout" class="btn btn-ghost hidden" title="Esci">Esci</button>
       <button id="btnTheme" class="theme-toggle" title="Cambia tema chiaro/scuro" type="button">

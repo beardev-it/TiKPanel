@@ -114,7 +114,22 @@ class WifiNetworkOut(BaseModel):
     source: Optional[str] = Field(
         default=None, description="Stack WiFi che espone questa radio: wifi, capsman, wireless o sconosciuta"
     )
+    managed_by_capsman: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Solo per source='wifi': True se la radio è provisionata centralmente dal CAPsMAN "
+            "integrato nel pacchetto 'wifi' (RouterOS >= 7.13, a volte chiamato 'CAPsMAN v2'), "
+            "False se è gestita localmente. Per source='capsman' la gestione centrale è implicita "
+            "(è il vecchio CAPsMAN, v1); per source='wireless' è sempre locale/standalone."
+        ),
+    )
     clients: list[WifiClientOut] = Field(default_factory=list)
+
+
+class WifiModuleStatusOut(BaseModel):
+    wireless: bool = Field(description="Driver legacy /interface/wireless presente su questo router")
+    capsman: bool = Field(description="Vecchio CAPsMAN (/caps-man) presente su questo router")
+    wifi: bool = Field(description="Nuovo driver /interface/wifi (RouterOS >= 7.13) presente su questo router")
 
     model_config = {"populate_by_name": True}
 

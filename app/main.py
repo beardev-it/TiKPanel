@@ -34,6 +34,7 @@ from .schemas import (
     VlanCreateIn,
     VlanOut,
     VlanUpdateIn,
+    WifiModuleStatusOut,
     WifiNetworkOut,
 )
 from .security import require_api_key
@@ -295,6 +296,17 @@ async def get_client_traffic(body: ClientTrafficIn) -> TrafficOut:
 async def list_wifi_networks() -> list[WifiNetworkOut]:
     raw = await get_client().list_wifi_networks()
     return [WifiNetworkOut(**item) for item in raw]
+
+
+@app.get(
+    "/wifi-modules",
+    response_model=WifiModuleStatusOut,
+    tags=["wifi"],
+    dependencies=[Depends(require_api_key)],
+    summary="Presenza dei moduli/driver WiFi (wireless legacy, CAPsMAN, nuovo pacchetto wifi) su questo router",
+)
+async def wifi_module_status() -> WifiModuleStatusOut:
+    return WifiModuleStatusOut(**await get_client().get_wifi_module_status())
 
 
 @app.post(

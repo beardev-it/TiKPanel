@@ -184,6 +184,7 @@ function showLogin() {
   document.getElementById("app").classList.add("hidden");
   document.getElementById("userBadge").classList.add("hidden");
   document.getElementById("btnLogout").classList.add("hidden");
+  document.getElementById("moduleBadges").classList.add("hidden");
   setConnStatus("unknown", "non connesso");
 }
 
@@ -194,6 +195,24 @@ function showApp() {
   badge.textContent = state.username;
   badge.classList.remove("hidden");
   document.getElementById("btnLogout").classList.remove("hidden");
+  loadWifiModuleStatus();
+}
+
+async function loadWifiModuleStatus() {
+  const badges = document.getElementById("moduleBadges");
+  const wirelessDot = document.getElementById("wirelessModuleDot");
+  const wifiDot = document.getElementById("wifiModuleDot");
+  try {
+    const status = await api("/wifi-modules");
+    wirelessDot.className = "dot " + (status.wireless ? "dot-ok" : "dot-error");
+    wirelessDot.title = status.wireless ? "Modulo wireless installato" : "Modulo wireless non installato su questo router";
+    wifiDot.className = "dot " + (status.wifi ? "dot-ok" : "dot-error");
+    wifiDot.title = status.wifi ? "Modulo wifi installato" : "Modulo wifi non installato su questo router";
+    badges.classList.remove("hidden");
+  } catch (_) {
+    // non blocchiamo l'avvio della dashboard per questo: i badge restano semplicemente nascosti
+    badges.classList.add("hidden");
+  }
 }
 
 function logout(message) {
@@ -411,8 +430,29 @@ document.getElementById("refreshVlans").addEventListener("click", loadVlans);
 
 // ---------- client & reti WiFi (vista unificata) ----------
 
-function formatSourceLabel(source) {
-  return { wifi: "WiFi", capsman: "CAPsMAN", wireless: "Wireless", sconosciuta: "" }[source] || "";
+// Due stack WiFi possibili su RouterOS, incompatibili tra loro e da non confondere:
+// - "wireless"/"capsman" = driver legacy (/interface/wireless), opzionalmente gestito
+//   centralmente dal vecchio CAPsMAN (/caps-man) — quello che il router chiama solo "CAPsMAN"
+// - "wifi" = nuovo driver (/interface/wifi, RouterOS >= 7.13, supporta WiFi 6/6E),
+//   opzionalmente gestito dal CAPsMAN integrato nel pacchetto stesso (spesso chiamato in modo
+//   informale "CAPsMAN v2" per distinguerlo dal precedente, anche se MikroTik lo chiama solo
+//   "CAPsMAN" pure lui)
+function formatSourceLabel(net) {
+  switch (net.source) {
+    case "wireless":
+      return "Wireless (legacy, locale)";
+    case "capsman":
+      return "Wireless (legacy) — CAPsMAN";
+    case "wifi":
+      return net.managed_by_capsman ? "WiFi (nuovo driver) — CAPsMAN v2" : "WiFi (nuovo driver, locale)";
+    default:
+      return "";
+  }
+}
+
+function stackGeneration(source) {
+  // per una classe CSS che raggruppi visivamente i due stack (badge di colore diverso)
+  return source === "wifi" ? "stack-new" : source === "capsman" || source === "wireless" ? "stack-legacy" : "";
 }
 
 // Selezioni correnti (checkbox) per le azioni di gruppo, e cache dell'ultimo caricamento
@@ -588,8 +628,10 @@ function renderWifiNetworks(networks) {
       text: net.disabled ? "disabilitata" : net.running === false ? "down" : "up",
     });
 
-    const sourceLabel = formatSourceLabel(net.source);
-    const metaParts = [net.ssid ? `SSID: ${net.ssid}` : null, sourceLabel].filter(Boolean);
+    const sourceLabel = formatSourceLabel(net);
+    const stackTag = sourceLabel
+      ? el("span", { class: "tag " + stackGeneration(net.source), text: sourceLabel })
+      : null;
 
     const netCheckbox = el("input", { type: "checkbox" });
     netCheckbox.checked = selection.networks.has(net.name);
@@ -619,16 +661,21 @@ function renderWifiNetworks(networks) {
       }
     }
 
+    const metaLine = net.ssid ? `SSID: ${net.ssid}` : null;
+
     container.appendChild(
       el("div", { class: "wifi-card" }, [
         el("div", { class: "wifi-card-head" }, [
-          el("div", { class: "wifi-card-title" }, [
-            el("div", { class: "wifi-card-check" }, [netCheckbox, el("h3", { text: net.name })]),
-            statusBadge,
-          ]),
+          el(
+            "div",
+            { class: "wifi-card-title" },
+            [el("div", { class: "wifi-card-check" }, [netCheckbox, el("h3", { text: net.name })]), statusBadge, stackTag].filter(
+              Boolean
+            )
+          ),
           el("div", { class: "wifi-client-actions" }, [trafficCell, toggleBtn]),
         ]),
-        metaParts.length ? el("p", { class: "wifi-card-meta", text: metaParts.join(" · ") }) : el("span"),
+        metaLine ? el("p", { class: "wifi-card-meta", text: metaLine }) : el("span"),
         clientList,
       ])
     );

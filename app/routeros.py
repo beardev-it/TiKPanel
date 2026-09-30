@@ -477,11 +477,57 @@ class RouterOSClient:
                 return []
             raise
 
+    async def _menu_available(self, path: str) -> bool:
+        """True se il menu esiste su questo router (pacchetto/driver presente), anche se
+        vuoto. False solo se RouterOS risponde "no such command or directory" (400/404):
+        pacchetto non installato o hardware assente. Usato per il badge "moduli installati",
+        non per elencare dati (per quello si usa _list_optional/_get_optional, che su un
+        menu assente tornano [] / None invece di propagare l'errore)."""
+        try:
+            await self._request("GET", path)
+            return True
+        except RouterOSError as exc:
+            if exc.upstream_status_code in self._OPTIONAL_MENU_STATUS_CODES:
+                return False
+            raise
+
+    async def get_wifi_module_status(self) -> dict:
+        """Presenza dei moduli/driver WiFi su questo router, per il badge in testata.
+        Indipendente dal fatto che siano configurati o abbiano client collegati."""
+        return {
+            "wireless": await self._menu_available("/interface/wireless"),
+            "capsman": await self._menu_available("/caps-man/interface"),
+            "wifi": await self._menu_available("/interface/wifi"),
+        }
+
+    async def _get_optional(self, path: str) -> Optional[dict]:
+        """Come _list_optional, ma per un menu che espone un singolo oggetto (non una
+        lista), es. /interface/wifi/capsman. None se il menu non esiste su questo router."""
+        try:
+            return await self._request("GET", path)
+        except RouterOSError as exc:
+            if exc.upstream_status_code in self._OPTIONAL_MENU_STATUS_CODES:
+                return None
+            raise
+
     async def list_wifi_radios(self) -> list[dict]:
         """Radio/SSID configurati, qualunque sia lo stack WiFi in uso su questo router:
         nuovo pacchetto 'wifi' (RouterOS >= 7.13), CAPsMAN, o wireless standalone legacy.
-        Router senza hardware WiFi o senza nulla configurato -> lista vuota, nessun errore."""
+        Router senza hardware WiFi o senza nulla configurato -> lista vuota, nessun errore.
+
+        I due stack (legacy 'wireless'/CAPsMAN v1 e nuovo 'wifi'/CAPsMAN v2) sono tenuti
+        distinti tramite il campo 'source', così l'interfaccia può mostrare chiaramente
+        quale motore WiFi gestisce ciascuna radio invece di darle tutte per uguali.
+        """
         radios: list[dict] = []
+
+        # Il pacchetto 'wifi' ha un CAPsMAN integrato (menu singolo, non una lista): se
+        # 'enabled', le radio sottostanti possono essere provisionate centralmente da lì
+        # (quello che in giro viene chiamato informalmente "CAPsMAN v2", per distinguerlo
+        # dal vecchio /caps-man legacy). Su router senza il pacchetto 'wifi' il menu non
+        # esiste -> _get_optional torna None, e semplicemente non marchiamo nulla.
+        wifi_capsman = await self._get_optional("/interface/wifi/capsman")
+        wifi_capsman_v2_enabled = bool(wifi_capsman) and wifi_capsman.get("enabled") == "true"
 
         for item in await self._list_optional("/interface/wifi"):
             radios.append(
@@ -491,6 +537,7 @@ class RouterOSClient:
                     "disabled": item.get("disabled") == "true",
                     "running": item.get("running") == "true",
                     "source": "wifi",
+                    "managed_by_capsman": wifi_capsman_v2_enabled,
                 }
             )
 
