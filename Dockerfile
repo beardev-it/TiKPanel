@@ -3,6 +3,12 @@ FROM python:3.12-slim AS base
 # Immagine multi-architettura (funziona su router MikroTik ARM/ARM64/x86
 # con RouterOS "container" feature, e su un PC/server esterno x86_64).
 
+# SHA del commit da cui è stata costruita questa immagine (passato dalla pipeline CI).
+# Serve a verificare da /container/print detail (env-current=BUILD_SHA=...) o da
+# GET /health quale codice sta davvero girando, senza doverlo dedurre da sintomi indiretti.
+ARG GIT_SHA=unknown
+ENV BUILD_SHA=$GIT_SHA
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1

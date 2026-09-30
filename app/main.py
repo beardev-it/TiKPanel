@@ -9,6 +9,7 @@ Il servizio è pensato per girare come container:
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
@@ -91,12 +92,18 @@ async def routeros_error_handler(_request, exc: RouterOSError) -> JSONResponse:
 
 @app.get("/health", tags=["meta"])
 async def health() -> dict:
-    return {"status": "ok"}
+    return {"status": "ok", "build_sha": os.environ.get("BUILD_SHA", "unknown")}
 
 
 @app.get("/", tags=["meta"])
 async def root() -> dict:
-    return {"service": "TikPanel", "version": "0.9beta", "docs": "/docs", "ui": "/ui"}
+    return {
+        "service": "TikPanel",
+        "version": "0.9beta",
+        "build_sha": os.environ.get("BUILD_SHA", "unknown"),
+        "docs": "/docs",
+        "ui": "/ui",
+    }
 
 
 @app.get("/ui-config", tags=["meta"])
