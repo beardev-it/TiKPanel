@@ -110,8 +110,11 @@
 :local dataMountName "tikpanel-data"
 :local dataMountSrc ($diskSlot . "/containers/tikpanel-data")
 
-:if ([:len [/container/mounts find where name=$dataMountName]] = 0) do={
-    /container/mounts add name=$dataMountName src=$dataMountSrc dst="/data"
+# NOTA: il campo che identifica un mount su /container/mounts si chiama "list" (non
+# "name" — un errore facile, perché "name" esiste su tante altre menu RouterOS ma non
+# qui), e /container/add lo referenzia con "mountlists" (non "mounts").
+:if ([:len [/container/mounts find where list=$dataMountName]] = 0) do={
+    /container/mounts add list=$dataMountName src=$dataMountSrc dst="/data"
     :log info ("TiKPanel: mount persistente '" . $dataMountName . "' creato (" . $dataMountSrc . " -> /data)")
 } else={
     :log info ("TiKPanel: mount persistente '" . $dataMountName . "' gia' presente, salto")
@@ -140,7 +143,7 @@
 # =============================================================================
 :if ([:len [/container find where root-dir=$containerRootDir]] = 0) do={
     /container/add remote-image=$image interface=$vethName root-dir=$containerRootDir \
-        mounts=$dataMountName envlist=$envListName logging=yes
+        mountlists=$dataMountName envlist=$envListName logging=yes
     :log info "TiKPanel: container aggiunto, pull immagine in corso..."
 } else={
     :log warning "TiKPanel: un container con questo root-dir esiste gia', non ricreato (se veniva da una installazione precedente senza il mount persistente, vedi INSTALL.md per la migrazione)"

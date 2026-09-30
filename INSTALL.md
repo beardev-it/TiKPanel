@@ -142,13 +142,14 @@ un repull), va migrata una volta sola:
    `<tuo-disco>/containers/tikpanel/data/users.json` (il percorso dentro il `root-dir` esistente)
    e scaricalo sul tuo PC — oppure segna semplicemente username/ruoli da ricreare a mano dopo,
    se sono pochi (le password non sono comunque recuperabili, sono hash: dovrai reimpostarle).
-2. **Crea il mount e collegalo al container esistente**:
+2. **Crea il mount e collegalo al container esistente** (il campo che identifica un mount è
+   `list`, non `name`; il container lo referenzia con `mountlists`, non `mounts`):
    ```
-   /container/mounts add name=tikpanel-data src=<tuo-disco>/containers/tikpanel-data dst=/data
+   /container/mounts add list=tikpanel-data src=<tuo-disco>/containers/tikpanel-data dst=/data
    /container/stop 0
-   /container/set 0 mounts=tikpanel-data
+   /container/set 0 mountlists=tikpanel-data
    ```
-   Se la tua versione di RouterOS non permette di modificare `mounts` su un container già
+   Se la tua versione di RouterOS non permette di modificare `mountlists` su un container già
    creato (`/container/set` rifiuta), rimuovi il container e ricrealo da capo:
    ```
    /container/remove 0
