@@ -91,7 +91,10 @@ class RouterOSClient:
     # ---------- interfacce (fisiche e virtuali) ----------
 
     async def list_interfaces(self) -> list[dict]:
-        return await self._request("GET", "/interface")
+        # RouterOS a volte risponde 200 con body vuoto (non "[]") quando una lista non ha
+        # elementi: senza il fallback qui, il chiamante riceverebbe None e crasherebbe
+        # iterandoci sopra invece di vedere semplicemente "nessuna interfaccia".
+        return await self._request("GET", "/interface") or []
 
     async def get_interface(self, name_or_id: str) -> dict:
         items = await self._request("GET", "/interface", params={"name": name_or_id})
@@ -142,7 +145,7 @@ class RouterOSClient:
     # ---------- VLAN (interface/vlan) ----------
 
     async def list_vlans(self) -> list[dict]:
-        return await self._request("GET", "/interface/vlan")
+        return await self._request("GET", "/interface/vlan") or []
 
     async def get_vlan(self, name_or_id: str) -> dict:
         items = await self._request("GET", "/interface/vlan", params={"name": name_or_id})
@@ -208,7 +211,7 @@ class RouterOSClient:
 
     async def list_wireless_registrations(self) -> list[dict]:
         try:
-            return await self._request("GET", "/interface/wireless/registration-table")
+            return await self._request("GET", "/interface/wireless/registration-table") or []
         except RouterOSError as exc:
             if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
                 return []
@@ -216,7 +219,7 @@ class RouterOSClient:
 
     async def list_capsman_registrations(self) -> list[dict]:
         try:
-            return await self._request("GET", "/caps-man/registration-table")
+            return await self._request("GET", "/caps-man/registration-table") or []
         except RouterOSError as exc:
             if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
                 return []
@@ -225,7 +228,7 @@ class RouterOSClient:
     async def list_wifi_registrations(self) -> list[dict]:
         """Client registrati sul nuovo pacchetto 'wifi' (RouterOS >= 7.13, sostituisce wireless-cm2)."""
         try:
-            return await self._request("GET", "/interface/wifi/registration-table")
+            return await self._request("GET", "/interface/wifi/registration-table") or []
         except RouterOSError as exc:
             if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
                 return []
@@ -233,7 +236,7 @@ class RouterOSClient:
 
     async def list_hotspot_active(self) -> list[dict]:
         try:
-            return await self._request("GET", "/ip/hotspot/active")
+            return await self._request("GET", "/ip/hotspot/active") or []
         except RouterOSError as exc:
             if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
                 return []
@@ -385,7 +388,7 @@ class RouterOSClient:
             existing = await self._request(
                 "GET", "/ip/firewall/address-list", params={"list": list_name, "address": ip_address}
             )
-            for item in existing:
+            for item in existing or []:
                 await self._request("DELETE", f"/ip/firewall/address-list/{item['.id']}")
 
         leases = await self._list_optional_params("/ip/dhcp-server/lease", {"mac-address": mac_address})
@@ -435,9 +438,11 @@ class RouterOSClient:
 
     async def _list_optional(self, path: str) -> list[dict]:
         """GET generico che tratta un menu assente (pacchetto non installato / hardware senza
-        wireless) come lista vuota invece che come errore."""
+        wireless) come lista vuota invece che come errore. Anche una lista genuinamente vuota
+        conta: RouterOS a volte risponde 200 con body vuoto invece di "[]", nel qual caso
+        _request ritorna None — senza il fallback qui il chiamante crasherebbe iterandoci."""
         try:
-            return await self._request("GET", path)
+            return await self._request("GET", path) or []
         except RouterOSError as exc:
             if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
                 return []
@@ -446,7 +451,7 @@ class RouterOSClient:
     async def _list_optional_params(self, path: str, params: dict) -> list[dict]:
         """Come _list_optional, ma con query params (es. filtro per mac-address)."""
         try:
-            return await self._request("GET", path, params=params)
+            return await self._request("GET", path, params=params) or []
         except RouterOSError as exc:
             if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
                 return []
