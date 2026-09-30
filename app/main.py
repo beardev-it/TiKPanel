@@ -38,7 +38,7 @@ from .schemas import (
 from .security import require_api_key
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("mikrotik-gate")
+logger = logging.getLogger("tikpanel")
 
 
 class _TrafficPollingLogFilter(logging.Filter):
@@ -62,7 +62,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     logging.getLogger().setLevel(settings.log_level.upper())
     app.state.routeros = RouterOSClient(settings)
-    logger.info("mikrotik-gate avviato, target RouterOS: %s:%s", settings.mikrotik_host, settings.mikrotik_port)
+    logger.info("TiKPanel avviato, target RouterOS: %s:%s", settings.mikrotik_host, settings.mikrotik_port)
     try:
         yield
     finally:

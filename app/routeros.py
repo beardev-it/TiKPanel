@@ -11,7 +11,7 @@ import httpx
 
 from .config import Settings
 
-logger = logging.getLogger("mikrotik-gate.routeros")
+logger = logging.getLogger("tikpanel.routeros")
 
 
 class RouterOSError(RuntimeError):
@@ -334,7 +334,7 @@ class RouterOSClient:
                     "chain": "forward",
                     "src-address-list": list_name,
                     "action": "drop",
-                    "comment": f"mikrotik-gate: blocca client in {list_name}",
+                    "comment": f"TiKPanel: blocca client in {list_name}",
                 },
             )
         existing_forward_dst = await self._request(
@@ -350,7 +350,7 @@ class RouterOSClient:
                     "chain": "forward",
                     "dst-address-list": list_name,
                     "action": "drop",
-                    "comment": f"mikrotik-gate: blocca client in {list_name} (risposte)",
+                    "comment": f"TiKPanel: blocca client in {list_name} (risposte)",
                 },
             )
 
@@ -369,7 +369,7 @@ class RouterOSClient:
                 await self._request(
                     "PUT",
                     "/ip/firewall/address-list",
-                    json={"list": list_name, "address": ip_address, "comment": f"mikrotik-gate: {mac_address}"},
+                    json={"list": list_name, "address": ip_address, "comment": f"TiKPanel: {mac_address}"},
                 )
 
         leases = await self._list_optional_params("/ip/dhcp-server/lease", {"mac-address": mac_address})

@@ -1,7 +1,7 @@
-# Guida all'installazione di mikrotik-gate su router MikroTik
+# Guida all'installazione di TiKPanel su router MikroTik
 
 Questa guida documenta la procedura **effettivamente testata e funzionante** per installare
-mikrotik-gate direttamente su una RouterBOARD (validata su RB5009UPr, RouterOS 7.24.4, arm64).
+TiKPanel direttamente su una RouterBOARD (validata su RB5009UPr, RouterOS 7.24.4, arm64).
 Include gli errori incontrati durante il setup e come sono stati risolti, così da evitarli.
 
 ## Prerequisiti
@@ -20,7 +20,7 @@ Include gli errori incontrati durante il setup e come sono stati risolti, così 
 6. Configurare il subsystem container (registry, storage temporaneo)
 7. Aggiungere le variabili d'ambiente e avviare il container
 
-Lo script `mikrotik-gate-full-setup.rsc` allegato automatizza i punti 3-7. I punti 1-2 vanno
+Lo script `tikpanel-full-setup.rsc` allegato automatizza i punti 3-7. I punti 1-2 vanno
 fatti a parte (il punto 2 richiede un'interazione fisica sul router e non è scriptabile).
 
 ---
@@ -62,7 +62,7 @@ deve mostrare `container: yes`.
 
 ## 3-7. Setup automatico
 
-Apri `mikrotik-gate-full-setup.rsc`, personalizza in cima al file:
+Apri `tikpanel-full-setup.rsc`, personalizza in cima al file:
 
 | Variabile | Cosa impostare |
 |---|---|
@@ -75,7 +75,7 @@ Apri `mikrotik-gate-full-setup.rsc`, personalizza in cima al file:
 
 Poi:
 ```
-/import file-name=mikrotik-gate-full-setup.rsc
+/import file-name=tikpanel-full-setup.rsc
 ```
 
 Segui l'avanzamento con:
@@ -109,7 +109,7 @@ contro RouterOS stesso — può accedere chiunque abbia un utente RouterOS con p
 ## Errori incontrati durante il setup (e come evitarli)
 
 Questi sono i problemi reali riscontrati durante l'installazione su RB5009UPr — lo script
-`mikrotik-gate-full-setup.rsc` li evita già tutti, ma è utile saperli riconoscere se qualcosa
+`tikpanel-full-setup.rsc` li evita già tutti, ma è utile saperli riconoscere se qualcosa
 va storto in una configurazione diversa dalla tua.
 
 ### `/ip address add address=X interface=veth1` in conflitto
@@ -129,7 +129,7 @@ non necessariamente l'IP LAN "principale" del router.
 
 ### `502 Bad Gateway` dagli endpoint che parlano con RouterOS
 
-Sintomo di mikrotik-gate quando non riesce a raggiungere la REST API di RouterOS. Cause
+Sintomo di TiKPanel quando non riesce a raggiungere la REST API di RouterOS. Cause
 riscontrate, in ordine di probabilità:
 1. `MIKROTIK_HOST` sbagliato (vedi sopra)
 2. Certificato TLS mancante o non firmato su `www-ssl` (vedi sotto) — solo se `MIKROTIK_USE_SSL=true`
@@ -146,9 +146,9 @@ l'handshake TLS ancora prima della verifica del client. Verifica con:
 il certificato usato da `www-ssl` deve avere il flag **K** (chiave privata presente). Se manca,
 ricrealo e firmalo:
 ```
-/certificate add name=mikrotik-gate-cert common-name=mikrotik-gate-cert days-valid=3650 key-usage=key-cert-sign,crl-sign,tls-server
-/certificate sign mikrotik-gate-cert
-/ip service set www-ssl certificate=mikrotik-gate-cert disabled=no
+/certificate add name=tikpanel-cert common-name=tikpanel-cert days-valid=3650 key-usage=key-cert-sign,crl-sign,tls-server
+/certificate sign tikpanel-cert
+/ip service set www-ssl certificate=tikpanel-cert disabled=no
 ```
 
 ### `critical login failure for user api-user via api`

@@ -55,7 +55,7 @@ disponibile da RouterOS 7.1), quindi non serve installare nulla sul router oltre
    **In alternativa**, usa lo script incluso `router-setup.rsc`: genera un certificato TLS
    self-signed, abilita `www-ssl` (disabilitando `www` in chiaro), crea l'utente API dedicato con
    permessi minimi e, opzionalmente, limita via firewall l'accesso alla REST API al solo IP del
-   PC/server che eseguirà mikrotik-gate. Modifica le variabili in cima al file (password, IP
+   PC/server che eseguirà TiKPanel. Modifica le variabili in cima al file (password, IP
    consentito), copialo sul router e lancialo con:
    ```
    /import file-name=router-setup.rsc
@@ -108,8 +108,8 @@ Il servizio risponde su `http://<host-del-container>:8000`, con documentazione i
 ### Build manuale senza compose
 
 ```bash
-docker build -t mikrotik-gate .
-docker run -d --name mikrotik-gate --env-file .env -p 8000:8000 --restart unless-stopped mikrotik-gate
+docker build -t tikpanel .
+docker run -d --name tikpanel --env-file .env -p 8000:8000 --restart unless-stopped tikpanel
 ```
 
 ### Esecuzione a bordo router MikroTik
@@ -118,8 +118,8 @@ Su RouterOS con il pacchetto `container` abilitato:
 
 ```
 /container/mounts/add name=gate-env src-path=/gate/.env dst-path=/app/.env
-/container/add remote-image=<tuo-registry>/mikrotik-gate:latest interface=veth1 root-dir=usb1/gate mounts=gate-env
-/container/start [find comment="mikrotik-gate"]
+/container/add remote-image=ghcr.io/beardev-it/tikpanel:latest interface=veth1 root-dir=usb1/gate mounts=gate-env
+/container/start [find comment="tikpanel"]
 ```
 
 Nota: sul router **non puoi usare `MIKROTIK_HOST=127.0.0.1`** puntando al router stesso mentre giri

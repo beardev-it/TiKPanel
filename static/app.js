@@ -1,4 +1,4 @@
-// mikrotik-gate — dashboard (bozza)
+// TiKPanel — dashboard (bozza)
 // Nessuna dipendenza esterna: fetch + DOM puro.
 //
 // Autenticazione: login con le credenziali RouterOS dell'utente (verificate
@@ -6,9 +6,9 @@
 // sessione (JWT) firmato dal server. Nessuna password viene mai salvata nel
 // browser: solo il token, che scade da solo dopo qualche ora.
 
-const LS_TOKEN = "mikrotik-gate.token";
-const LS_USERNAME = "mikrotik-gate.username";
-const LS_THEME = "mikrotik-gate.theme";
+const LS_TOKEN = "tikpanel.token";
+const LS_USERNAME = "tikpanel.username";
+const LS_THEME = "tikpanel.theme";
 
 const state = {
   baseUrl: "", // caricato da /ui-config all'avvio, non richiesto all'utente

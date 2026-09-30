@@ -1,8 +1,8 @@
 services:
-  mikrotik-gate:
+  tikpanel:
     build: .
-    image: mikrotik-gate:latest
-    container_name: mikrotik-gate
+    image: tikpanel:latest
+    container_name: tikpanel
     restart: unless-stopped
     env_file:
       - .env
