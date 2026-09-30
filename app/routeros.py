@@ -15,12 +15,26 @@ logger = logging.getLogger("tikpanel.routeros")
 
 
 class RouterOSError(RuntimeError):
-    """Errore restituito da RouterOS o dal trasporto verso di esso."""
+    """Errore restituito da RouterOS o dal trasporto verso di esso.
 
-    def __init__(self, message: str, status_code: int = 502, detail: Any = None):
+    `status_code` è lo status HTTP che TikPanel restituisce al chiamante (422 per
+    errori RouterOS < 500, 502 per errori di trasporto/RouterOS >= 500) — NON lo
+    status originale di RouterOS, che invece è in `upstream_status_code` (es. 400
+    o 404 per un menu non disponibile). I controlli "questo è un menu opzionale
+    assente" devono guardare `upstream_status_code`, non `status_code`.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        status_code: int = 502,
+        detail: Any = None,
+        upstream_status_code: Optional[int] = None,
+    ):
         super().__init__(message)
         self.status_code = status_code
         self.detail = detail
+        self.upstream_status_code = upstream_status_code
 
 
 async def verify_user_credentials(
@@ -82,6 +96,7 @@ class RouterOSClient:
                 f"RouterOS ha rifiutato la richiesta ({resp.status_code})",
                 status_code=422 if resp.status_code < 500 else 502,
                 detail=detail,
+                upstream_status_code=resp.status_code,
             )
 
         if not resp.content:
@@ -129,7 +144,7 @@ class RouterOSClient:
                 "POST", "/interface/monitor-traffic", json={"interface": name_or_id, "once": "yes"}
             )
         except RouterOSError as exc:
-            if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
+            if exc.upstream_status_code in self._OPTIONAL_MENU_STATUS_CODES:
                 return None
             raise
         if not result:
@@ -213,7 +228,7 @@ class RouterOSClient:
         try:
             return await self._request("GET", "/interface/wireless/registration-table") or []
         except RouterOSError as exc:
-            if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
+            if exc.upstream_status_code in self._OPTIONAL_MENU_STATUS_CODES:
                 return []
             raise
 
@@ -221,7 +236,7 @@ class RouterOSClient:
         try:
             return await self._request("GET", "/caps-man/registration-table") or []
         except RouterOSError as exc:
-            if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
+            if exc.upstream_status_code in self._OPTIONAL_MENU_STATUS_CODES:
                 return []
             raise
 
@@ -230,7 +245,7 @@ class RouterOSClient:
         try:
             return await self._request("GET", "/interface/wifi/registration-table") or []
         except RouterOSError as exc:
-            if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
+            if exc.upstream_status_code in self._OPTIONAL_MENU_STATUS_CODES:
                 return []
             raise
 
@@ -238,7 +253,7 @@ class RouterOSClient:
         try:
             return await self._request("GET", "/ip/hotspot/active") or []
         except RouterOSError as exc:
-            if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
+            if exc.upstream_status_code in self._OPTIONAL_MENU_STATUS_CODES:
                 return []
             raise
 
@@ -444,7 +459,7 @@ class RouterOSClient:
         try:
             return await self._request("GET", path) or []
         except RouterOSError as exc:
-            if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
+            if exc.upstream_status_code in self._OPTIONAL_MENU_STATUS_CODES:
                 return []
             raise
 
@@ -453,7 +468,7 @@ class RouterOSClient:
         try:
             return await self._request("GET", path, params=params) or []
         except RouterOSError as exc:
-            if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
+            if exc.upstream_status_code in self._OPTIONAL_MENU_STATUS_CODES:
                 return []
             raise
 
@@ -585,7 +600,7 @@ class RouterOSClient:
                     json={"interface": interface, direction_field: f"{ip_address}/32", "once": "yes"},
                 )
             except RouterOSError as exc:
-                if exc.status_code in self._OPTIONAL_MENU_STATUS_CODES:
+                if exc.upstream_status_code in self._OPTIONAL_MENU_STATUS_CODES:
                     return 0
                 raise
             return sum(int(flow.get(rate_field, 0) or 0) for flow in (result or []))
