@@ -195,7 +195,6 @@ function showApp() {
   badge.textContent = state.username;
   badge.classList.remove("hidden");
   document.getElementById("btnLogout").classList.remove("hidden");
-  loadWifiModuleStatus();
 }
 
 async function loadWifiModuleStatus() {
@@ -591,6 +590,7 @@ async function loadClientsAndNetworks() {
   updateNetworkBulkBar();
   updateClientBulkBar();
   updateWiredBulkBar();
+  loadWifiModuleStatus();
 
   const networksContainer = document.getElementById("wifiNetworks");
   const wiredBody = document.getElementById("wiredClientsBody");

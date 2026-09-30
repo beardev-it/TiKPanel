@@ -149,13 +149,19 @@ body {
 .dot-ok { background: var(--up); }
 .dot-error { background: var(--down); }
 
-/* Badge "moduli installati" in testata: un led verde/rosso per ciascun driver WiFi. */
+/* Badge "moduli installati" nella tab Gestione WiFi: un led verde/rosso per ciascun
+   driver WiFi presente su questo router (indipendentemente da come sono configurati). */
 .module-badges {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding-left: 4px;
-  border-left: 1px solid var(--border);
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text-muted);
 }
 .module-badge {
   display: inline-flex;

@@ -29,14 +29,6 @@
     <div class="conn-status">
       <span id="connDot" class="dot dot-unknown"></span>
       <span id="connText">non connesso</span>
-      <span id="moduleBadges" class="module-badges hidden">
-        <span class="module-badge" title="Driver WiFi legacy (/interface/wireless)">
-          <span id="wirelessModuleDot" class="dot dot-unknown"></span> Wireless
-        </span>
-        <span class="module-badge" title="Nuovo driver WiFi (/interface/wifi, RouterOS >= 7.13)">
-          <span id="wifiModuleDot" class="dot dot-unknown"></span> WiFi
-        </span>
-      </span>
       <span id="userBadge" class="user-badge hidden"></span>
       <button id="btnLogout" class="btn btn-ghost hidden" title="Esci">Esci</button>
       <button id="btnTheme" class="theme-toggle" title="Cambia tema chiaro/scuro" type="button">
@@ -135,6 +127,15 @@
       <div class="panel-head">
         <h2>Gestione WiFi</h2>
         <button class="btn" id="refreshWifi">Aggiorna</button>
+      </div>
+
+      <div id="moduleBadges" class="module-badges hidden">
+        <span class="module-badge" title="Driver WiFi legacy (/interface/wireless), gestibile centralmente dal vecchio CAPsMAN (/caps-man)">
+          <span id="wirelessModuleDot" class="dot dot-unknown"></span> Wireless (CAPsMAN)
+        </span>
+        <span class="module-badge" title="Nuovo driver WiFi (/interface/wifi, RouterOS >= 7.13), nome in codice interno 'wifiwave2'">
+          <span id="wifiModuleDot" class="dot dot-unknown"></span> WiFi (WifiWave2)
+        </span>
       </div>
 
       <div id="networkBulkBar" class="bulk-bar hidden">
