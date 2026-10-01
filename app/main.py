@@ -8,8 +8,10 @@ Il servizio è pensato per girare come container:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
@@ -18,6 +20,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from .clientstore import ClientDataError, ClientStore, normalize_mac
 from .auth import create_bootstrap_token, create_session_token, decode_session_token
 from .config import Settings, get_settings
 from .routeros import RouterOSClient, RouterOSError
@@ -26,9 +29,16 @@ from .schemas import (
     ClientBlockIn,
     ClientDisconnectIn,
     ClientOut,
+    AccessAllowIn,
+    AccessControlOut,
+    AccessEnableIn,
+    AccessLearningStartIn,
+    AccessRevokeIn,
     ClientTrafficBatchIn,
     ClientTrafficBatchOut,
     ClientTrafficIn,
+    GroupAssignIn,
+    GroupIn,
     InterfaceTrafficBatchIn,
     InterfaceOut,
     InterfaceStateIn,
@@ -61,10 +71,34 @@ class _TrafficPollingLogFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         message = record.getMessage()
-        return "/traffic" not in message
+        # silenzia anche il polling dello stato access-list (aggiornato ogni pochi secondi
+        # mentre la modalità aggiunta client è aperta)
+        return "/traffic" not in message and "GET /access-control HTTP" not in message
 
 
 logging.getLogger("uvicorn.access").addFilter(_TrafficPollingLogFilter())
+
+
+async def _access_watchdog() -> None:
+    """Riattiva l'access-list quando scade la modalità aggiunta client.
+
+    Vive lato server (non nel browser) e legge la scadenza dal file dati, quindi la rete non
+    resta aperta per dimenticanza neanche se si chiude la pagina o si riavvia il container.
+    Se RouterOS non risponde, ritenta al giro successivo.
+    """
+    while True:
+        try:
+            until = (await get_clients_store().snapshot())["learning_until"]
+            if until is not None and time.time() >= until:
+                await get_client().set_access_enforcement(True)
+                await get_clients_store().set_learning_until(None)
+                logger.info("Modalità aggiunta client scaduta: access-list riattivata")
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - il watchdog non deve mai morire
+            logger.warning("Controllo scadenza access-list non riuscito, riprovo: %s", exc)
+            await asyncio.sleep(10)
 
 
 @asynccontextmanager
@@ -73,11 +107,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logging.getLogger().setLevel(settings.log_level.upper())
     app.state.routeros = RouterOSClient(settings)
     app.state.users = UserStore(settings.users_file)
+    app.state.clients = ClientStore(settings.clients_file)
     await app.state.users.ensure_bootstrap_admin(settings.initial_admin_username, settings.initial_admin_password)
     logger.info("TiKPanel avviato, target RouterOS: %s:%s", settings.mikrotik_host, settings.mikrotik_port)
+    watchdog = asyncio.create_task(_access_watchdog())
     try:
         yield
     finally:
+        watchdog.cancel()
+        try:
+            await watchdog
+        except asyncio.CancelledError:
+            pass
         await app.state.routeros.aclose()
 
 
@@ -98,6 +139,15 @@ def get_client() -> RouterOSClient:
 
 def get_users() -> UserStore:
     return app.state.users
+
+
+def get_clients_store() -> ClientStore:
+    return app.state.clients
+
+
+@app.exception_handler(ClientDataError)
+async def client_data_error_handler(_request, exc: ClientDataError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content={"error": str(exc), "detail": str(exc)})
 
 
 @app.exception_handler(RouterOSError)
@@ -402,6 +452,170 @@ async def get_clients_traffic_batch(body: ClientTrafficBatchIn) -> ClientTraffic
         for ip, s in raw.items()
     }
     return ClientTrafficBatchOut(samples=samples)
+
+
+# ---------------------------------------------------------------------------
+# Access-list CAPsMAN (autorizzazione dei client per MAC) e gruppi di client
+# ---------------------------------------------------------------------------
+
+
+async def _access_control_state() -> AccessControlOut:
+    client = get_client()
+    store = await get_clients_store().snapshot()
+    status_ = await client.get_access_control_status()
+
+    leases = {}
+    if status_["available"] and status_["allowed"]:
+        for lease in await client.list_dhcp_leases():
+            mac = (lease.get("mac-address") or "").upper()
+            if mac:
+                leases[mac] = lease
+
+    until = store["learning_until"]
+    seconds_left = max(0, int(until - time.time())) if until is not None else None
+    learning = bool(status_["available"]) and not status_["enforced"] and seconds_left is not None and seconds_left > 0
+
+    assignments = {m: g for m, g in store["assignments"].items() if g in store["groups"]}
+    counts = {name: 0 for name in store["groups"]}
+    for group in assignments.values():
+        counts[group] += 1
+
+    allowed = []
+    for mac in status_["allowed"]:
+        label = store["labels"].get(mac) or client._lease_hostname(leases.get(mac, {}))[0]
+        allowed.append({"mac_address": mac, "label": label, "group": assignments.get(mac)})
+
+    return AccessControlOut(
+        available=status_["available"],
+        stacks=status_["stacks"],
+        configured=status_["configured"],
+        enforced=status_["enforced"],
+        learning=learning,
+        learning_seconds_left=seconds_left if learning else None,
+        default_learning_minutes=get_settings().access_learning_default_minutes,
+        allowed=allowed,
+        groups=[{"name": n, "members": counts[n]} for n in store["groups"]],
+        assignments=assignments,
+        labels=store["labels"],
+    )
+
+
+@app.get(
+    "/access-control",
+    response_model=AccessControlOut,
+    tags=["access-list"],
+    dependencies=[Depends(require_api_key)],
+    summary="Stato dell'access-list CAPsMAN, client autorizzati, gruppi e assegnazioni",
+)
+async def access_control_state() -> AccessControlOut:
+    return await _access_control_state()
+
+
+@app.post(
+    "/access-control/enable",
+    response_model=AccessControlOut,
+    tags=["access-list"],
+    dependencies=[Depends(require_api_key)],
+    summary="Attiva l'access-list: possono collegarsi solo i client autorizzati",
+)
+async def access_control_enable(body: AccessEnableIn) -> AccessControlOut:
+    client = get_client()
+    if body.authorize_connected:
+        for net in await client.list_wifi_networks(capsman_only=True):
+            for c in net.get("clients", []):
+                await client.allow_client(c["mac_address"])
+                if c.get("hostname"):
+                    await get_clients_store().set_label(c["mac_address"], c["hostname"])
+    await client.set_access_enforcement(True)
+    await get_clients_store().set_learning_until(None)
+    return await _access_control_state()
+
+
+@app.post(
+    "/access-control/learning/start",
+    response_model=AccessControlOut,
+    tags=["access-list"],
+    dependencies=[Depends(require_api_key)],
+    summary="Sospende l'access-list per aggiungere nuovi client; si riattiva da sola alla scadenza",
+)
+async def access_control_learning_start(body: AccessLearningStartIn) -> AccessControlOut:
+    minutes = body.minutes or get_settings().access_learning_default_minutes
+    await get_client().set_access_enforcement(False)
+    await get_clients_store().set_learning_until(time.time() + minutes * 60)
+    return await _access_control_state()
+
+
+@app.post(
+    "/access-control/learning/stop",
+    response_model=AccessControlOut,
+    tags=["access-list"],
+    dependencies=[Depends(require_api_key)],
+    summary="Termina la modalità aggiunta client e riattiva l'access-list",
+)
+async def access_control_learning_stop() -> AccessControlOut:
+    await get_client().set_access_enforcement(True)
+    await get_clients_store().set_learning_until(None)
+    return await _access_control_state()
+
+
+@app.post(
+    "/access-control/allow",
+    tags=["access-list"],
+    dependencies=[Depends(require_api_key)],
+    summary="Aggiunge un client (per MAC) all'access-list",
+)
+async def access_control_allow(body: AccessAllowIn) -> dict:
+    mac = normalize_mac(body.mac_address)
+    result = await get_client().allow_client(mac)
+    if body.label:
+        await get_clients_store().set_label(mac, body.label)
+    return result
+
+
+@app.post(
+    "/access-control/revoke",
+    tags=["access-list"],
+    dependencies=[Depends(require_api_key)],
+    summary="Toglie un client dall'access-list (opzionalmente lo disconnette subito)",
+)
+async def access_control_revoke(body: AccessRevokeIn) -> dict:
+    mac = normalize_mac(body.mac_address)
+    client = get_client()
+    result = await client.disallow_client(mac)
+    await get_clients_store().forget_label(mac)
+    if body.disconnect:
+        result["disconnect"] = await client.disconnect_client(mac)
+    return result
+
+
+@app.post("/groups", tags=["gruppi"], dependencies=[Depends(require_api_key)], summary="Crea un gruppo di client")
+async def create_group(body: GroupIn) -> dict:
+    return {"name": await get_clients_store().create_group(body.name)}
+
+
+@app.patch("/groups/{name}", tags=["gruppi"], dependencies=[Depends(require_api_key)], summary="Rinomina un gruppo")
+async def rename_group(name: str, body: GroupIn) -> dict:
+    return {"name": await get_clients_store().rename_group(name, body.name)}
+
+
+@app.delete(
+    "/groups/{name}",
+    tags=["gruppi"],
+    dependencies=[Depends(require_api_key)],
+    summary="Elimina un gruppo (i suoi client restano senza gruppo)",
+)
+async def delete_group(name: str) -> dict:
+    return {"unassigned": await get_clients_store().delete_group(name)}
+
+
+@app.put(
+    "/clients/group",
+    tags=["gruppi"],
+    dependencies=[Depends(require_api_key)],
+    summary="Assegna uno o più client a un gruppo (group vuoto = toglie dal gruppo)",
+)
+async def assign_clients_group(body: GroupAssignIn) -> dict:
+    return {"assigned": await get_clients_store().assign(body.mac_addresses, body.group or None)}
 
 
 # ---------------------------------------------------------------------------

@@ -805,11 +805,11 @@ function stackGeneration(source) {
 const selection = {
   networks: new Set(), // nomi interfaccia radio selezionati
   clients: new Set(), // MAC selezionati, client WiFi (block/unblock/disconnetti)
-  wiredClients: new Set(), // MAC selezionati, client cablati (solo block/unblock: non ha senso "disconnetterli")
 };
 let lastClientsByMac = new Map();
 let lastNetworksByName = new Map();
-let lastWiredMacs = new Set();
+// stato access-list/gruppi letto da GET /access-control (+ filtro per gruppo e scadenza locale)
+const accessState = { data: null, filter: "", deadline: null };
 
 async function blockClient(client) {
   await withOverlay(async () => {
@@ -898,7 +898,7 @@ function startInterfaceTrafficPolling() {
 const clientTrafficTargets = []; // { ip, iface, cell }
 
 function registerClientTraffic(client, cell) {
-  const iface = client.wifi_interface || client.capsman_interface || client.wireless_interface || client.arp_interface;
+  const iface = client.interface || client.wifi_interface || client.capsman_interface || client.wireless_interface || client.arp_interface;
   if (!client.ip_address || !iface) {
     cell.replaceChildren(...trafficNode(null).childNodes);
     cell.className = "traffic unavailable";
@@ -935,46 +935,337 @@ function startClientTrafficPolling() {
   pollers.set("clients-batch", setInterval(tick, TRAFFIC_POLL_MS));
 }
 
-function buildClientCheckbox(mac, set = selection.clients, onChange = updateClientBulkBar) {
+function buildClientCheckbox(mac) {
   const checkbox = el("input", { type: "checkbox" });
-  checkbox.checked = set.has(mac);
+  checkbox.checked = selection.clients.has(mac);
   checkbox.addEventListener("change", () => {
-    if (checkbox.checked) set.add(mac);
-    else set.delete(mac);
-    onChange();
+    if (checkbox.checked) selection.clients.add(mac);
+    else selection.clients.delete(mac);
+    updateClientBulkBar();
   });
   return checkbox;
 }
 
+// ---------- access-list e gruppi ----------
+
+function allowedSet() {
+  return new Set(((accessState.data && accessState.data.allowed) || []).map((a) => a.mac_address));
+}
+
+function groupOf(mac) {
+  return (accessState.data && accessState.data.assignments && accessState.data.assignments[mac.toUpperCase()]) || "";
+}
+
+function clientMatchesFilter(client) {
+  const f = accessState.filter;
+  if (!f) return true;
+  const g = groupOf(client.mac_address);
+  return f === "__none__" ? !g : g === f;
+}
+
+function formatCountdown(seconds) {
+  const s = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+async function loadAccessControl() {
+  try {
+    accessState.data = await api("/access-control");
+  } catch (err) {
+    accessState.data = null;
+    toast(err.message, "error");
+  }
+  accessState.deadline =
+    accessState.data && accessState.data.learning ? Date.now() + accessState.data.learning_seconds_left * 1000 : null;
+  renderAccessPanel();
+  renderGroupsPanel();
+}
+
+function startAccessTimers() {
+  if (pollers.has("access-countdown")) return;
+  // il conto alla rovescia è locale (ogni secondo); lo stato vero lo rilegge dal server
+  // ogni 15s, e subito alla scadenza, perché è il watchdog del server a riattivare la regola
+  pollers.set(
+    "access-countdown",
+    setInterval(async () => {
+      if (!accessState.deadline) return;
+      const left = (accessState.deadline - Date.now()) / 1000;
+      const label = document.getElementById("accessHint");
+      if (left > 0) {
+        label.dataset.countdown = formatCountdown(left);
+        renderAccessHint();
+      } else {
+        accessState.deadline = null;
+        await loadAccessControl();
+        await refreshClientsView();
+      }
+    }, 1000)
+  );
+  pollers.set(
+    "access-sync",
+    setInterval(() => {
+      if (accessState.deadline) loadAccessControl();
+    }, 15000)
+  );
+}
+
+function renderAccessHint() {
+  const d = accessState.data;
+  const hint = document.getElementById("accessHint");
+  if (!d) return;
+  if (!d.configured) {
+    hint.textContent = "L'access-list non è ancora attiva: chi si collega non viene filtrato. Attivala per far collegare solo i client autorizzati.";
+  } else if (d.learning && accessState.deadline) {
+    hint.textContent = `Modalità aggiunta client: l'access-list è sospesa, chiunque può collegarsi. Si riattiva da sola tra ${formatCountdown(
+      (accessState.deadline - Date.now()) / 1000
+    )}. Autorizza i client collegati, poi premi "Termina e riattiva".`;
+  } else if (d.enforced) {
+    hint.textContent = "Possono collegarsi solo i client in elenco. I client già collegati restano collegati finché non si riconnettono.";
+  } else {
+    hint.textContent = "L'access-list è disattivata: chiunque può collegarsi.";
+  }
+}
+
+function renderAccessPanel() {
+  const panel = document.getElementById("accessPanel");
+  const d = accessState.data;
+  if (!d || !d.available) {
+    panel.classList.add("hidden");
+    return;
+  }
+  panel.classList.remove("hidden");
+  const badge = document.getElementById("accessBadge");
+  const enforced = d.enforced && !d.learning;
+  badge.className = "badge " + (enforced ? "badge-up" : "badge-down");
+  badge.textContent = d.learning ? "aggiunta client" : enforced ? "attiva" : "disattivata";
+
+  const learning = !!d.learning;
+  document.getElementById("accessEnableBtn").classList.toggle("hidden", enforced || learning);
+  document.getElementById("accessLearnBtn").classList.toggle("hidden", learning || !d.configured);
+  document.getElementById("accessStopBtn").classList.toggle("hidden", !learning);
+  renderAccessHint();
+
+  const body = document.getElementById("accessAllowedBody");
+  body.innerHTML = "";
+  if (!d.allowed.length) {
+    body.innerHTML = `<tr><td colspan="5" class="empty">Nessun client autorizzato</td></tr>`;
+    return;
+  }
+  for (const a of d.allowed) {
+    const mac = a.mac_address;
+    const connected = lastClientsByMac.has(mac);
+    body.appendChild(
+      el("tr", {}, [
+        el("td", { text: a.label || "—" }),
+        el("td", { text: mac }),
+        el("td", { text: a.group || "—" }),
+        el("td", {}, [el("span", { class: "badge " + (connected ? "badge-up" : ""), text: connected ? "collegato" : "offline" })]),
+        el("td", {}, [
+          el("button", { class: "btn btn-sm btn-danger", text: "Rimuovi", onclick: () => revokeClient(mac, connected) }),
+        ]),
+      ])
+    );
+  }
+}
+
+function renderGroupsPanel() {
+  const d = accessState.data;
+  const list = document.getElementById("groupsList");
+  const groups = (d && d.groups) || [];
+  list.innerHTML = "";
+  if (!groups.length) list.appendChild(el("span", { class: "muted", text: "Nessun gruppo creato" }));
+  for (const g of groups) {
+    list.appendChild(
+      el("span", { class: "group-chip" }, [
+        el("span", { class: "group-chip-name", text: `${g.name} (${g.members})` }),
+        el("button", { class: "chip-btn", type: "button", title: "Rinomina", text: "✎", onclick: () => renameGroup(g.name) }),
+        el("button", { class: "chip-btn", type: "button", title: "Elimina", text: "✕", onclick: () => deleteGroup(g.name, g.members) }),
+      ])
+    );
+  }
+  const filter = document.getElementById("groupFilter");
+  const bulk = document.getElementById("bulkGroupSelect");
+  const current = accessState.filter;
+  filter.innerHTML = "";
+  filter.appendChild(el("option", { value: "", text: "di tutti i gruppi" }));
+  filter.appendChild(el("option", { value: "__none__", text: "senza gruppo" }));
+  bulk.innerHTML = "";
+  bulk.appendChild(el("option", { value: "", text: "— nessun gruppo —" }));
+  for (const g of groups) {
+    filter.appendChild(el("option", { value: g.name, text: g.name }));
+    bulk.appendChild(el("option", { value: g.name, text: g.name }));
+  }
+  if (current && ![...filter.options].some((o) => o.value === current)) accessState.filter = "";
+  filter.value = accessState.filter;
+}
+
+async function accessAction(path, body, okMessage) {
+  await withOverlay(async () => {
+    try {
+      await api(path, { method: "POST", body: JSON.stringify(body || {}) });
+      if (okMessage) toast(okMessage, "ok");
+      await loadClientsAndNetworks();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
+}
+
+document.getElementById("accessEnableBtn").addEventListener("click", () => {
+  const d = accessState.data;
+  const first = d && !d.configured;
+  const authorizeConnected =
+    first && confirm("Attivando l'access-list per la prima volta, vuoi autorizzare anche i client CAPsMAN collegati adesso?\n\nOK = autorizzali, Annulla = autorizza solo quelli già in elenco.");
+  accessAction("/access-control/enable", { authorize_connected: !!authorizeConnected }, "Access-list attivata");
+});
+
+document.getElementById("accessLearnBtn").addEventListener("click", () => {
+  const minutes = prompt(
+    `Per quanti minuti sospendere l'access-list? Durante questo tempo chiunque può collegarsi; poi si riattiva da sola.`,
+    String((accessState.data && accessState.data.default_learning_minutes) || 10)
+  );
+  if (minutes === null) return;
+  const n = parseInt(minutes, 10);
+  if (!Number.isFinite(n) || n < 1 || n > 120) {
+    toast("Inserisci un numero di minuti tra 1 e 120", "error");
+    return;
+  }
+  accessAction("/access-control/learning/start", { minutes: n }, "Modalità aggiunta client attiva");
+});
+
+document.getElementById("accessStopBtn").addEventListener("click", () =>
+  accessAction("/access-control/learning/stop", {}, "Access-list riattivata")
+);
+
+async function allowClient(client) {
+  const label = client.hostname || "";
+  await accessAction("/access-control/allow", { mac_address: client.mac_address, label }, `Client ${client.mac_address} autorizzato`);
+}
+
+async function revokeClient(mac, connected) {
+  const disconnect = connected && confirm(`Rimuovere ${mac} dall'access-list e disconnetterlo subito?\n\nOK = disconnetti ora, Annulla = lascia collegato fino alla prossima riconnessione.`);
+  if (!confirm(`Confermi di togliere ${mac} dall'access-list?`)) return;
+  await accessAction("/access-control/revoke", { mac_address: mac, disconnect: !!disconnect }, `Client ${mac} rimosso`);
+}
+
+async function groupRequest(method, path, body, okMessage) {
+  await withOverlay(async () => {
+    try {
+      await api(path, { method, body: body ? JSON.stringify(body) : undefined });
+      if (okMessage) toast(okMessage, "ok");
+      await loadClientsAndNetworks();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
+}
+
+document.getElementById("groupCreateForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = e.target.elements.name;
+  const name = input.value.trim();
+  if (!name) return;
+  await groupRequest("POST", "/groups", { name }, `Gruppo '${name}' creato`);
+  input.value = "";
+});
+
+function renameGroup(name) {
+  const next = prompt(`Nuovo nome per il gruppo '${name}':`, name);
+  if (next === null || !next.trim() || next.trim() === name) return;
+  groupRequest("PATCH", `/groups/${encodeURIComponent(name)}`, { name: next.trim() }, "Gruppo rinominato");
+}
+
+function deleteGroup(name, members) {
+  if (!confirm(`Eliminare il gruppo '${name}'? I suoi ${members} client resteranno senza gruppo.`)) return;
+  groupRequest("DELETE", `/groups/${encodeURIComponent(name)}`, null, "Gruppo eliminato");
+}
+
+document.getElementById("groupFilter").addEventListener("change", (e) => {
+  accessState.filter = e.target.value;
+  selection.clients.clear();
+  updateClientBulkBar();
+  refreshClientsView();
+});
+
+document.getElementById("bulkAssignGroup").addEventListener("click", async () => {
+  const macs = [...selection.clients];
+  if (!macs.length) return;
+  const group = document.getElementById("bulkGroupSelect").value;
+  await withOverlay(async () => {
+    try {
+      await api("/clients/group", { method: "PUT", body: JSON.stringify({ mac_addresses: macs, group: group || null }) });
+      toast(group ? `${macs.length} client assegnati a '${group}'` : `${macs.length} client tolti dal gruppo`, "ok");
+      await loadClientsAndNetworks();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
+});
+
+document.getElementById("bulkAllowClients").addEventListener("click", async () => {
+  const macs = [...selection.clients];
+  if (!macs.length) return;
+  await withOverlay(async () => {
+    const results = await Promise.allSettled(
+      macs.map((mac) => {
+        const c = lastClientsByMac.get(mac) || {};
+        return api("/access-control/allow", {
+          method: "POST",
+          body: JSON.stringify({ mac_address: mac, label: c.hostname || "" }),
+        });
+      })
+    );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    toast(
+      failed ? `${macs.length - failed}/${macs.length} client autorizzati, ${failed} falliti` : `${macs.length} client autorizzati`,
+      failed ? "error" : "ok"
+    );
+    await loadClientsAndNetworks();
+  });
+});
+
 function buildWifiClientRow(client) {
   lastClientsByMac.set(client.mac_address, client);
-  const hostnameLabel = client.hostname
-    ? client.hostname + (client.hostname_source === "comment" ? " (manuale)" : "")
-    : "";
-  const sub = [hostnameLabel, client.ip_address].filter(Boolean).join(" · ");
+  const label = (accessState.data && accessState.data.labels[client.mac_address.toUpperCase()]) || "";
+  const name = label || client.hostname || "";
+  const nameSuffix = !label && client.hostname && client.hostname_source === "comment" ? " (manuale)" : "";
+  const sub = [client.ip_address, client.mac_address && name ? client.mac_address : ""].filter(Boolean).join(" · ");
   const trafficCell = trafficPlaceholder();
   registerClientTraffic(client, trafficCell);
 
-  const blockBtn = el("button", {
-    class: "btn btn-sm " + (client.blocked ? "btn-down" : "btn-up"),
-    text: client.blocked ? "Sblocca" : "Blocca",
-    onclick: () => (client.blocked ? unblockClient(client) : blockClient(client)),
-  });
-  const disconnectBtn = el("button", {
-    class: "btn btn-sm btn-danger",
-    text: "Disconnetti",
-    onclick: () => disconnectClient(client),
-  });
+  const access = accessState.data && accessState.data.available ? accessState.data : null;
+  const isAllowed = allowedSet().has(client.mac_address.toUpperCase());
+  const group = groupOf(client.mac_address);
+
+  const badges = [];
+  if (access) {
+    badges.push(el("span", { class: "badge " + (isAllowed ? "badge-up" : "badge-down"), text: isAllowed ? "autorizzato" : "non autorizzato" }));
+  }
+  if (group) badges.push(el("span", { class: "tag group-tag", text: group }));
+
+  const actions = [trafficCell];
+  if (access && !isAllowed) {
+    actions.push(el("button", { class: "btn btn-sm btn-primary", text: "Autorizza", onclick: () => allowClient(client) }));
+  }
+  actions.push(
+    el("button", {
+      class: "btn btn-sm " + (client.blocked ? "btn-down" : "btn-up"),
+      text: client.blocked ? "Sblocca" : "Blocca",
+      onclick: () => (client.blocked ? unblockClient(client) : blockClient(client)),
+    }),
+    el("button", { class: "btn btn-sm btn-danger", text: "Disconnetti", onclick: () => disconnectClient(client) })
+  );
 
   return el("div", { class: "wifi-client-row" }, [
     el("div", { class: "wifi-client-select" }, [
       buildClientCheckbox(client.mac_address),
       el("div", { class: "wifi-client-main" }, [
-        el("span", { class: "wifi-client-mac", text: client.mac_address }),
-        sub ? el("span", { class: "wifi-client-sub", text: sub }) : el("span"),
+        el("span", { class: "wifi-client-mac", text: (name ? name + nameSuffix : client.mac_address) }),
+        el("span", { class: "wifi-client-sub", text: name ? sub : client.ip_address || "" }),
       ]),
+      ...badges,
     ]),
-    el("div", { class: "wifi-client-actions" }, [trafficCell, blockBtn, disconnectBtn]),
+    el("div", { class: "wifi-client-actions" }, actions),
   ]);
 }
 
@@ -994,52 +1285,39 @@ function updateClientBulkBar() {
   bar.classList.toggle("hidden", count === 0);
 }
 
-function updateWiredBulkBar() {
-  const bar = document.getElementById("wiredBulkBar");
-  const count = selection.wiredClients.size;
-  document.getElementById("wiredBulkCount").textContent =
-    count === 1 ? "1 client selezionato" : `${count} client selezionati`;
-  bar.classList.toggle("hidden", count === 0);
-}
-
 async function loadClientsAndNetworks() {
-  stopAllPolling();
   selection.networks.clear();
   selection.clients.clear();
-  selection.wiredClients.clear();
   updateNetworkBulkBar();
   updateClientBulkBar();
-  updateWiredBulkBar();
   loadWifiModuleStatus();
+  await refreshClientsView(true);
+}
 
+// Ricarica reti, client e stato access-list e ridisegna. Con `initial` mostra "Caricamento…".
+async function refreshClientsView(initial = false) {
+  stopAllPolling();
   const networksContainer = document.getElementById("wifiNetworks");
-  const wiredBody = document.getElementById("wiredClientsBody");
-  networksContainer.innerHTML = `<p class="empty">Caricamento…</p>`;
-  wiredBody.innerHTML = `<tr><td colspan="7" class="empty">Caricamento…</td></tr>`;
-
+  if (initial) networksContainer.innerHTML = `<p class="empty">Caricamento…</p>`;
   try {
-    const [networks, clients] = await Promise.all([api("/wifi-networks"), api("/clients")]);
+    const [networks] = await Promise.all([api("/wifi-networks"), loadAccessControl()]);
     lastNetworksByName = new Map(networks.map((n) => [n.name, n]));
     lastClientsByMac = new Map();
-
-    const wifiMacs = new Set();
-    for (const net of networks) for (const c of net.clients || []) wifiMacs.add(c.mac_address);
-
     renderWifiNetworks(networks);
-    renderWiredClients(clients.filter((c) => !wifiMacs.has(c.mac_address)));
+    renderAccessPanel(); // ora che sappiamo chi è collegato, aggiorna anche lo stato "collegato/offline"
     startInterfaceTrafficPolling();
     startClientTrafficPolling();
+    startAccessTimers();
     setConnStatus("ok", "connesso");
   } catch (err) {
     networksContainer.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`;
-    wiredBody.innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(err.message)}</td></tr>`;
   }
 }
 
 function renderWifiNetworks(networks) {
   const container = document.getElementById("wifiNetworks");
   if (!networks.length) {
-    container.innerHTML = `<p class="empty">Nessuna rete WiFi configurata su questo router</p>`;
+    container.innerHTML = `<p class="empty">Nessuna rete WiFi gestita da CAPsMAN su questo router</p>`;
     return;
   }
   container.innerHTML = "";
@@ -1074,11 +1352,15 @@ function renderWifiNetworks(networks) {
       registerInterfaceTraffic(net.name, trafficCell);
     }
 
+    const allClients = net.clients || [];
+    const shown = allClients.filter(clientMatchesFilter);
     const clientList = el("div", { class: "wifi-client-list" });
-    if (!net.clients || !net.clients.length) {
+    if (!allClients.length) {
       clientList.appendChild(el("p", { class: "wifi-empty", text: "Nessun client collegato su questa radio" }));
+    } else if (!shown.length) {
+      clientList.appendChild(el("p", { class: "wifi-empty", text: "Nessun client collegato corrisponde al filtro per gruppo" }));
     } else {
-      for (const c of net.clients) {
+      for (const c of shown) {
         clientList.appendChild(buildWifiClientRow(c));
       }
     }
@@ -1101,75 +1383,6 @@ function renderWifiNetworks(networks) {
         clientList,
       ])
     );
-  }
-}
-
-function renderWiredClients(clients) {
-  const body = document.getElementById("wiredClientsBody");
-  const selectAll = document.getElementById("wiredSelectAll");
-  lastWiredMacs = new Set(clients.map((c) => c.mac_address));
-  selectAll.checked = lastWiredMacs.size > 0 && [...lastWiredMacs].every((mac) => selection.wiredClients.has(mac));
-  if (!clients.length) {
-    body.innerHTML = `<tr><td colspan="7" class="empty">Nessun client cablato rilevato</td></tr>`;
-    return;
-  }
-  body.innerHTML = "";
-  for (const client of clients) {
-    lastClientsByMac.set(client.mac_address, client);
-    const blockedBadge = el("span", {
-      class: "badge " + (client.blocked ? "badge-down" : "badge-up"),
-      text: client.blocked ? "bloccato" : "libero",
-    });
-    // Un client cablato non ha una "sessione" da chiudere lato RouterOS (non è collegato
-    // a una radio o a un hotspot): l'unica azione sensata è bloccarlo/sbloccarlo via MAC.
-    const blockBtn = el("button", {
-      class: "btn btn-sm " + (client.blocked ? "btn-down" : "btn-up"),
-      text: client.blocked ? "Sblocca" : "Blocca",
-      onclick: () => (client.blocked ? unblockClient(client) : blockClient(client)),
-    });
-    const trafficCell = trafficPlaceholder();
-    registerClientTraffic(client, trafficCell);
-
-    body.appendChild(
-      el("tr", {}, [
-        el("td", {}, [buildClientCheckbox(client.mac_address, selection.wiredClients, updateWiredBulkBar)]),
-        el("td", { text: client.mac_address }),
-        el("td", { text: client.ip_address || "—" }),
-        el("td", {}, [hostnameCell(client)]),
-        el("td", {}, [blockedBadge]),
-        el("td", {}, [trafficCell]),
-        el("td", {}, [blockBtn]),
-      ])
-    );
-  }
-}
-
-document.getElementById("wiredSelectAll").addEventListener("change", (e) => {
-  for (const mac of lastWiredMacs) {
-    if (e.target.checked) selection.wiredClients.add(mac);
-    else selection.wiredClients.delete(mac);
-  }
-  updateWiredBulkBar();
-  // ri-renderizzare tutta la vista è più semplice che sincronizzare ogni checkbox a mano
-  loadClientsAndNetworksKeepingSelection();
-});
-
-async function loadClientsAndNetworksKeepingSelection() {
-  // variante "leggera": ridisegna senza azzerare le selezioni correnti (usata dopo select-all)
-  stopAllPolling();
-  const networksContainer = document.getElementById("wifiNetworks");
-  const wiredBody = document.getElementById("wiredClientsBody");
-  try {
-    const [networks, clients] = await Promise.all([api("/wifi-networks"), api("/clients")]);
-    const wifiMacs = new Set();
-    for (const net of networks) for (const c of net.clients || []) wifiMacs.add(c.mac_address);
-    renderWifiNetworks(networks);
-    renderWiredClients(clients.filter((c) => !wifiMacs.has(c.mac_address)));
-    startInterfaceTrafficPolling();
-    startClientTrafficPolling();
-  } catch (err) {
-    networksContainer.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`;
-    wiredBody.innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(err.message)}</td></tr>`;
   }
 }
 
@@ -1207,9 +1420,6 @@ async function bulkSetNetworks(disabled) {
 document.getElementById("bulkBlockClients").addEventListener("click", () => bulkClientAction("block", selection.clients));
 document.getElementById("bulkUnblockClients").addEventListener("click", () => bulkClientAction("unblock", selection.clients));
 document.getElementById("bulkDisconnectClients").addEventListener("click", () => bulkClientAction("disconnect", selection.clients));
-
-document.getElementById("bulkBlockWired").addEventListener("click", () => bulkClientAction("block", selection.wiredClients));
-document.getElementById("bulkUnblockWired").addEventListener("click", () => bulkClientAction("unblock", selection.wiredClients));
 
 async function bulkClientAction(action, macSet) {
   const macs = [...macSet];

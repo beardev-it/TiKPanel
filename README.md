@@ -151,6 +151,32 @@ statico, o nessun lease affatto) e non ha nessun effetto collaterale persistente
 porte LAN + WiFi locale bridgiate insieme). Su una LAN instradata senza bridging il blocco per
 MAC non ha alcun bridge su cui applicarsi e non blocca nulla — è un caso raro, non gestito qui.
 
+### Access-list WiFi (solo CAPsMAN) e gruppi di client
+
+TikPanel gestisce **solo i client collegati tramite CAPsMAN** (i client cablati e le radio locali
+non sono più mostrati). L'autorizzazione avviene solo tramite l'**access-list WiFi di RouterOS**
+(`/interface/wifi/access-list` oppure `/caps-man/access-list`, a seconda dello stack presente):
+
+- per ogni client autorizzato TikPanel crea una regola `accept` per MAC con commento
+  `TikPanel: autorizzato ...`, più una regola finale `reject` (commento
+  `TikPanel: nega i client non autorizzati`) tenuta sempre in fondo. Le regole senza questi
+  commenti non vengono toccate.
+- **Attiva access-list**: abilita la regola di blocco; si collegano solo i client in elenco.
+  Alla prima attivazione puoi autorizzare anche i client collegati in quel momento.
+- **Aggiungi nuovi client**: disabilita la regola di blocco per N minuti (predefinito 10,
+  `ACCESS_LEARNING_DEFAULT_MINUTES`). Collega il nuovo dispositivo, poi premi **Autorizza**
+  sulla sua riga e infine **Termina e riattiva**. Se ti dimentichi, la riattivazione avviene da
+  sola alla scadenza (la gestisce il server, quindi vale anche a pagina chiusa o dopo un
+  riavvio del container).
+- I client già collegati restano collegati quando l'access-list viene attivata o un client viene
+  rimosso: l'effetto si vede alla riconnessione (usa "Disconnetti" o l'opzione alla rimozione).
+- **Gruppi**: nomi scelti da te, assegnabili ai client selezionati e filtrabili. Gruppi,
+  assegnazioni ed etichette sono salvati in `clients.json` (`CLIENTS_FILE`, di default
+  `/data/clients.json`, accanto a `users.json`) e restano anche se il client si scollega.
+
+API: `GET /access-control`, `POST /access-control/{enable,learning/start,learning/stop,allow,revoke}`,
+`POST /groups`, `PATCH|DELETE /groups/{nome}`, `PUT /clients/group`.
+
 ### Segreti in chiaro: cosa sapere
 
 Le password **dentro** `USERS_FILE` sono salvate con hash bcrypt, mai in chiaro. Le **variabili

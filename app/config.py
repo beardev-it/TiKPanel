@@ -33,6 +33,22 @@ class Settings(BaseSettings):
         "/data/users.json",
         description="Percorso del file con utenti/ruoli della dashboard TikPanel (deve stare su storage persistente)",
     )
+    clients_file: str = Field(
+        "/data/clients.json",
+        description=(
+            "Percorso del file con gruppi di client, etichette e stato della modalità aggiunta client "
+            "(deve stare su storage persistente, di norma nello stesso mount di users_file)"
+        ),
+    )
+    access_learning_default_minutes: int = Field(
+        10,
+        description=(
+            "Durata predefinita (minuti) della modalità aggiunta client, con l'access-list sospesa: "
+            "scaduta, l'access-list viene riattivata da sola."
+        ),
+        ge=1,
+        le=120,
+    )
     initial_admin_username: str = Field(
         "admin", description="Username del primo amministratore, creato automaticamente se users_file è vuoto/assente"
     )

@@ -166,6 +166,48 @@
         <button class="btn" id="refreshWifi">Aggiorna</button>
       </div>
 
+      <!-- Access-list CAPsMAN: solo i client autorizzati possono collegarsi -->
+      <div id="accessPanel" class="access-panel hidden">
+        <div class="access-head">
+          <div class="access-title">
+            <h3>Access-list</h3>
+            <span id="accessBadge" class="badge"></span>
+          </div>
+          <div class="access-actions">
+            <button id="accessEnableBtn" class="btn btn-sm btn-up hidden" type="button">Attiva access-list</button>
+            <button id="accessLearnBtn" class="btn btn-sm btn-primary hidden" type="button">Aggiungi nuovi client</button>
+            <button id="accessStopBtn" class="btn btn-sm btn-up hidden" type="button">Termina e riattiva</button>
+          </div>
+        </div>
+        <p id="accessHint" class="muted"></p>
+        <table class="data-table access-table">
+          <thead>
+            <tr><th>Nome</th><th>MAC</th><th>Gruppo</th><th>Stato</th><th></th></tr>
+          </thead>
+          <tbody id="accessAllowedBody">
+            <tr><td colspan="5" class="empty">Nessun client autorizzato</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Gruppi di client (nomi scelti dall'utente, persistenti) -->
+      <div id="groupsPanel" class="groups-panel">
+        <div class="groups-head">
+          <h3>Gruppi</h3>
+          <form id="groupCreateForm" class="inline-form groups-form">
+            <input type="text" name="name" placeholder="nome del nuovo gruppo" maxlength="40" required autocomplete="off" />
+            <button type="submit" class="btn btn-sm btn-primary">Crea gruppo</button>
+          </form>
+        </div>
+        <div id="groupsList" class="groups-list"><span class="muted">Nessun gruppo creato</span></div>
+        <label class="group-filter">Mostra client
+          <select id="groupFilter">
+            <option value="">di tutti i gruppi</option>
+            <option value="__none__">senza gruppo</option>
+          </select>
+        </label>
+      </div>
+
       <div id="moduleBadges" class="module-badges hidden">
         <span class="module-badge" title="Driver WiFi legacy (/interface/wireless), gestibile centralmente dal vecchio CAPsMAN (/caps-man)">
           <span id="wirelessModuleDot" class="dot dot-unknown"></span> Wireless (CAPsMAN)
@@ -187,32 +229,13 @@
 
       <div id="clientBulkBar" class="bulk-bar hidden">
         <span id="clientBulkCount" class="bulk-count"></span>
+        <button id="bulkAllowClients" class="btn btn-sm btn-up" type="button">Autorizza selezionati</button>
         <button id="bulkBlockClients" class="btn btn-sm btn-down" type="button">Blocca selezionati</button>
         <button id="bulkUnblockClients" class="btn btn-sm btn-up" type="button">Sblocca selezionati</button>
         <button id="bulkDisconnectClients" class="btn btn-sm btn-danger" type="button">Disconnetti selezionati</button>
+        <select id="bulkGroupSelect" class="bulk-group-select" title="Gruppo da assegnare ai selezionati"></select>
+        <button id="bulkAssignGroup" class="btn btn-sm" type="button">Assegna al gruppo</button>
       </div>
-
-      <div class="wired-clients-head">
-        <h3>Client cablati</h3>
-      </div>
-
-      <div id="wiredBulkBar" class="bulk-bar hidden">
-        <span id="wiredBulkCount" class="bulk-count"></span>
-        <button id="bulkBlockWired" class="btn btn-sm btn-down" type="button">Blocca selezionati</button>
-        <button id="bulkUnblockWired" class="btn btn-sm btn-up" type="button">Sblocca selezionati</button>
-      </div>
-
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th class="col-check"><input type="checkbox" id="wiredSelectAll" title="Seleziona tutti" /></th>
-            <th>MAC</th><th>IP</th><th>Hostname</th><th>Bloccato</th><th>Traffico</th><th></th>
-          </tr>
-        </thead>
-        <tbody id="wiredClientsBody">
-          <tr><td colspan="7" class="empty">Nessun dato — connettiti al servizio</td></tr>
-        </tbody>
-      </table>
     </section>
 
     <!-- UTENTI (solo amministratore) -->

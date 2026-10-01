@@ -603,3 +603,53 @@ main { padding: 24px 28px 48px; max-width: 1080px; margin: 0 auto; }
 .traffic .tr-down { color: var(--up); }
 .traffic .tr-up { color: var(--text-muted); }
 .traffic.unavailable { color: var(--text-muted); opacity: 0.6; }
+
+/* ---------- access-list e gruppi ---------- */
+.access-panel,
+.groups-panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  box-shadow: var(--shadow);
+}
+.access-head,
+.groups-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.access-head h3,
+.groups-head h3 { margin: 0; font-size: 1rem; }
+.access-title { display: flex; align-items: center; gap: 10px; }
+.access-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.access-table { margin-top: 8px; }
+.groups-form { margin: 0; }
+.groups-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 10px; }
+.group-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 3px 6px 3px 12px;
+  font-size: 0.85rem;
+}
+.chip-btn {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+}
+.chip-btn:hover { background: var(--bg-soft); }
+.group-filter { display: inline-flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text-muted); }
+.group-tag { background: var(--accent-soft); color: var(--accent); }
+.bulk-group-select { max-width: 200px; }

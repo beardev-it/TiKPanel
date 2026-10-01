@@ -563,6 +563,148 @@ class RouterOSClient:
             "wifi": await self._menu_available("/interface/wifi"),
         }
 
+    # ---------- access-list CAPsMAN: autorizzazione dei client per MAC ----------
+    #
+    # Modello: nell'access-list di CAPsMAN le regole si valutano in ordine e vince la prima
+    # che corrisponde. TikPanel mantiene
+    #   - una regola "accept" per ogni MAC autorizzato (commento "TikPanel: autorizzato <MAC>")
+    #   - UNA regola "reject" senza criteri (vale per tutti), sempre in fondo, che è
+    #     l'interruttore: abilitata = solo i client in elenco possono collegarsi; disabilitata
+    #     = chiunque può collegarsi (modalità "aggiunta client").
+    # Le regole create a mano sul router (senza il nostro commento) non vengono toccate.
+    #
+    # Quale access-list: con CAPsMAN v2 (pacchetto 'wifi', RouterOS >= 7.13) è
+    # /interface/wifi/access-list; con il vecchio CAPsMAN è /caps-man/access-list. Se sono
+    # presenti entrambi gli stack si scrive su entrambi, così la regola vale per tutti i CAP.
+
+    _ACCESS_REJECT_COMMENT = "TikPanel: nega i client non autorizzati"
+    _ACCESS_ALLOW_PREFIX = "TikPanel: autorizzato "
+
+    async def _access_menus(self) -> list[tuple[str, str]]:
+        legacy = await self._menu_available("/caps-man/interface")
+        wifi = await self._menu_available("/interface/wifi")
+        wifi_capsman = await self._get_optional("/interface/wifi/capsman")
+        wifi_v2 = bool(wifi_capsman) and wifi_capsman.get("enabled") == "true"
+        menus: list[tuple[str, str]] = []
+        if wifi and (wifi_v2 or not legacy):
+            menus.append(("wifi", "/interface/wifi/access-list"))
+        if legacy:
+            menus.append(("capsman", "/caps-man/access-list"))
+        return menus
+
+    @classmethod
+    def _allow_comment(cls, mac_address: str) -> str:
+        return f"{cls._ACCESS_ALLOW_PREFIX}{mac_address.upper()}"
+
+    async def _ensure_reject_rule(self, path: str, disabled: Optional[bool]) -> None:
+        """Garantisce che la regola 'reject' esista, sia l'ULTIMA dell'access-list e (se
+        `disabled` non è None) abbia lo stato richiesto. Se non è in fondo la si ricrea:
+        RouterOS valuta in ordine, e una 'reject' davanti alle 'accept' le renderebbe inutili."""
+        entries = await self._list_optional(path)
+        rejects = [e for e in entries if e.get("comment") == self._ACCESS_REJECT_COMMENT]
+        if not rejects:
+            if disabled is None:
+                return  # niente da riordinare: l'access-list non è ancora stata attivata
+            await self._request(
+                "PUT",
+                path,
+                json={
+                    "action": "reject",
+                    "comment": self._ACCESS_REJECT_COMMENT,
+                    "disabled": "yes" if disabled else "no",
+                },
+            )
+            return
+
+        reject = rejects[0]
+        currently_disabled = reject.get("disabled") == "true"
+        target_disabled = currently_disabled if disabled is None else disabled
+        is_last = bool(entries) and entries[-1].get(".id") == reject.get(".id")
+        if not is_last:
+            await self._request("DELETE", f"{path}/{reject['.id']}")
+            await self._request(
+                "PUT",
+                path,
+                json={
+                    "action": "reject",
+                    "comment": self._ACCESS_REJECT_COMMENT,
+                    "disabled": "yes" if target_disabled else "no",
+                },
+            )
+        elif target_disabled != currently_disabled:
+            await self._request(
+                "PATCH", f"{path}/{reject['.id']}", json={"disabled": "yes" if target_disabled else "no"}
+            )
+        # più regole 'reject' nostre (non dovrebbe succedere): teniamo solo la prima
+        for extra in rejects[1:]:
+            await self._request("DELETE", f"{path}/{extra['.id']}")
+
+    async def get_access_control_status(self) -> dict:
+        menus = await self._access_menus()
+        if not menus:
+            return {"available": False, "stacks": [], "configured": False, "enforced": False, "allowed": []}
+
+        reject_state: list[tuple[bool, bool]] = []  # (esiste, abilitata) per stack
+        allowed: dict[str, set[str]] = {}
+        for stack, path in menus:
+            entries = await self._list_optional(path)
+            rejects = [e for e in entries if e.get("comment") == self._ACCESS_REJECT_COMMENT]
+            reject_state.append((bool(rejects), bool(rejects) and rejects[0].get("disabled") != "true"))
+            for entry in entries:
+                comment = entry.get("comment") or ""
+                if (
+                    comment.startswith(self._ACCESS_ALLOW_PREFIX)
+                    and entry.get("action", "accept") == "accept"
+                    and entry.get("disabled") != "true"
+                ):
+                    mac = (entry.get("mac-address") or comment[len(self._ACCESS_ALLOW_PREFIX):]).upper()
+                    allowed.setdefault(mac, set()).add(stack)
+
+        configured = all(exists for exists, _ in reject_state)
+        enforced = configured and all(enabled for _, enabled in reject_state)
+        return {
+            "available": True,
+            "stacks": [stack for stack, _ in menus],
+            "configured": configured,
+            "enforced": enforced,
+            "allowed": sorted(allowed),
+        }
+
+    async def allow_client(self, mac_address: str) -> dict:
+        """Autorizza un client: regola 'accept' per il suo MAC su ogni access-list CAPsMAN."""
+        menus = await self._access_menus()
+        if not menus:
+            raise RouterOSError("CAPsMAN non rilevato su questo router: access-list non disponibile", status_code=409)
+        mac = mac_address.upper()
+        comment = self._allow_comment(mac)
+        for _stack, path in menus:
+            existing = [e for e in await self._list_optional(path) if e.get("comment") == comment]
+            if not existing:
+                await self._request(
+                    "PUT", path, json={"action": "accept", "mac-address": mac, "comment": comment}
+                )
+            await self._ensure_reject_rule(path, None)  # la 'reject' deve restare in fondo
+        return {"mac_address": mac, "allowed": True}
+
+    async def disallow_client(self, mac_address: str) -> dict:
+        menus = await self._access_menus()
+        mac = mac_address.upper()
+        comment = self._allow_comment(mac)
+        for _stack, path in menus:
+            for entry in await self._list_optional(path):
+                if entry.get("comment") == comment:
+                    await self._request("DELETE", f"{path}/{entry['.id']}")
+        return {"mac_address": mac, "allowed": False}
+
+    async def set_access_enforcement(self, enforced: bool) -> dict:
+        """Attiva (solo i MAC in elenco) o sospende (chiunque può collegarsi) l'access-list."""
+        menus = await self._access_menus()
+        if not menus:
+            raise RouterOSError("CAPsMAN non rilevato su questo router: access-list non disponibile", status_code=409)
+        for _stack, path in menus:
+            await self._ensure_reject_rule(path, disabled=not enforced)
+        return {"enforced": enforced}
+
     async def _get_optional(self, path: str) -> Optional[dict]:
         """Come _list_optional, ma per un menu che espone un singolo oggetto (non una
         lista), es. /interface/wifi/capsman. None se il menu non esiste su questo router."""
@@ -634,14 +776,31 @@ class RouterOSClient:
 
         return radios
 
-    async def list_wifi_networks(self) -> list[dict]:
+    async def list_wifi_networks(self, capsman_only: bool = True) -> list[dict]:
         """Reti WiFi configurate con, per ciascuna, i client attualmente collegati su
-        quella radio (arricchiti con IP/hostname da DHCP dove disponibili)."""
-        radios = await self.list_wifi_radios()
+        quella radio (arricchiti con IP/hostname da DHCP dove disponibili).
 
-        wireless_regs = await self.list_wireless_registrations()
-        capsman_regs = await self.list_capsman_registrations()
-        wifi_regs = await self.list_wifi_registrations()
+        Con capsman_only (default) si considerano solo le radio e i client gestiti da
+        CAPsMAN: quello legacy (/caps-man) e quello del pacchetto 'wifi' (v2, solo se
+        abilitato). Radio locali/standalone (/interface/wireless, o /interface/wifi senza
+        CAPsMAN) e client non WiFi restano fuori: TikPanel gestisce i client dei CAP.
+        """
+        radios = await self.list_wifi_radios()
+        if capsman_only:
+            radios = [
+                r
+                for r in radios
+                if r["source"] == "capsman" or (r["source"] == "wifi" and r.get("managed_by_capsman"))
+            ]
+            wireless_regs: list[dict] = []
+            capsman_regs = await self.list_capsman_registrations()
+            wifi_regs = (
+                await self.list_wifi_registrations() if any(r["source"] == "wifi" for r in radios) else []
+            )
+        else:
+            wireless_regs = await self.list_wireless_registrations()
+            capsman_regs = await self.list_capsman_registrations()
+            wifi_regs = await self.list_wifi_registrations()
 
         leases = await self.list_dhcp_leases()
         lease_by_mac: dict[str, dict] = {}
@@ -671,6 +830,8 @@ class RouterOSClient:
                     "signal_strength": reg.get("signal-strength"),
                     "uptime": reg.get("uptime"),
                     "blocked": mac in blocked_macs,
+                    # interfaccia radio su cui il client è registrato: serve a stimare il traffico
+                    "interface": iface,
                 }
             )
 

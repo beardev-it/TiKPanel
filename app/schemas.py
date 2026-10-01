@@ -118,6 +118,7 @@ class WifiClientOut(BaseModel):
     signal_strength: Optional[str] = None
     uptime: Optional[str] = None
     blocked: Optional[bool] = None
+    interface: Optional[str] = Field(default=None, description="Interfaccia radio su cui il client è registrato")
 
     model_config = {"extra": "allow"}
 
@@ -175,6 +176,60 @@ class ClientTrafficBatchIn(BaseModel):
 
 class ClientTrafficBatchOut(BaseModel):
     samples: dict[str, TrafficOut] = Field(default_factory=dict, description="Traffico per indirizzo IP")
+
+
+class AccessAllowedOut(BaseModel):
+    mac_address: str
+    label: Optional[str] = Field(default=None, description="Nome mostrato (etichetta salvata o hostname DHCP)")
+    group: Optional[str] = None
+
+
+class GroupOut(BaseModel):
+    name: str
+    members: int = Field(0, description="Quanti client sono assegnati a questo gruppo")
+
+
+class AccessControlOut(BaseModel):
+    available: bool = Field(description="False se su questo router non c'è CAPsMAN (nessuna access-list gestibile)")
+    stacks: list[str] = Field(default_factory=list, description="Access-list su cui si scrive: wifi e/o capsman")
+    configured: bool = Field(False, description="True se la regola di blocco generale è stata creata")
+    enforced: bool = Field(False, description="True se possono collegarsi solo i client autorizzati")
+    learning: bool = Field(False, description="True se è aperta la modalità aggiunta client (access-list sospesa)")
+    learning_seconds_left: Optional[int] = None
+    default_learning_minutes: int = 10
+    allowed: list[AccessAllowedOut] = Field(default_factory=list)
+    groups: list[GroupOut] = Field(default_factory=list)
+    assignments: dict[str, str] = Field(default_factory=dict, description="MAC -> nome gruppo")
+    labels: dict[str, str] = Field(default_factory=dict, description="MAC -> etichetta")
+
+
+class AccessEnableIn(BaseModel):
+    authorize_connected: bool = Field(
+        False, description="Prima di attivare, autorizza anche i client CAPsMAN collegati in questo momento"
+    )
+
+
+class AccessLearningStartIn(BaseModel):
+    minutes: Optional[int] = Field(default=None, ge=1, le=120, description="Durata; vuoto = valore predefinito")
+
+
+class AccessAllowIn(BaseModel):
+    mac_address: str
+    label: Optional[str] = Field(default=None, description="Nome da mostrare per questo client")
+
+
+class AccessRevokeIn(BaseModel):
+    mac_address: str
+    disconnect: bool = Field(False, description="Disconnette subito il client se è collegato")
+
+
+class GroupIn(BaseModel):
+    name: str
+
+
+class GroupAssignIn(BaseModel):
+    mac_addresses: list[str] = Field(min_length=1)
+    group: Optional[str] = Field(default=None, description="Nome del gruppo; vuoto = toglie dal gruppo")
 
 
 class LoginIn(BaseModel):
