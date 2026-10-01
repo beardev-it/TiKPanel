@@ -158,6 +158,9 @@ class TrafficOut(BaseModel):
 
 
 class ClientTrafficIn(BaseModel):
+    mac_address: Optional[str] = Field(
+        default=None, description="MAC del client WiFi: abilita la stima dai contatori della registration-table"
+    )
     ip_address: Optional[str] = Field(default=None, description="IP del client (richiesto per stimare il traffico)")
     interface: Optional[str] = Field(
         default=None, description="Interfaccia su cui è noto il client (radio WiFi o interfaccia ARP)"

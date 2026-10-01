@@ -441,8 +441,19 @@ async def get_client_traffic(body: ClientTrafficIn) -> TrafficOut:
     summary="Traffico istantaneo di più client: una sola lettura torch per interfaccia",
 )
 async def get_clients_traffic_batch(body: ClientTrafficBatchIn) -> ClientTrafficBatchOut:
-    pairs = [(t.ip_address, t.interface) for t in body.targets if t.ip_address and t.interface]
-    raw = await get_client().monitor_clients_traffic(pairs)
+    client = get_client()
+    raw: dict = {}
+    # client WiFi (MAC noto): contatori della registration-table; il resto (o chi non li ha) via torch
+    wifi_pairs = [(t.ip_address, t.mac_address) for t in body.targets if t.ip_address and t.mac_address]
+    if wifi_pairs:
+        raw.update(await client.monitor_wifi_clients_traffic(wifi_pairs))
+    pairs = [
+        (t.ip_address, t.interface)
+        for t in body.targets
+        if t.ip_address and t.interface and raw.get(t.ip_address) is None
+    ]
+    if pairs:
+        raw.update({ip: v for ip, v in (await client.monitor_clients_traffic(pairs)).items() if v is not None or ip not in raw})
     samples = {
         ip: (
             TrafficOut(rx_bps=s["rx_bps"], tx_bps=s["tx_bps"], available=True)

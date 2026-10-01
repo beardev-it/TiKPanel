@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Optional
 
 import httpx
@@ -76,6 +77,7 @@ class RouterOSClient:
             timeout=settings.mikrotik_timeout,
         )
         self.settings = settings
+        self._reg_counters: dict[str, tuple[float, int, int]] = {}  # mac -> (t, byte tx, byte rx)
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -716,10 +718,7 @@ class RouterOSClient:
                 {k: i.get(k) for k in ("name", "dynamic", "disabled", "running", "master-interface", "radio-mac")}
                 for i in await self._list_optional("/interface/wifi")
             ],
-            "wifi_registrations": [
-                {k: r.get(k) for k in ("interface", "mac-address", "ssid")}
-                for r in await self.list_wifi_registrations()
-            ],
+            "wifi_registrations": await self.list_wifi_registrations(),
             "capsman_registrations": len(await self.list_capsman_registrations()),
             "access_lists": {},
         }
@@ -993,6 +992,61 @@ class RouterOSClient:
         # Approssimazione ragionevole, non un contatore esatto per-client: RouterOS non ne
         # tiene uno nativo senza una coda (queue) dedicata.
         return {"rx_bps": download_bps, "tx_bps": upload_bps}
+
+    # ---------- traffico dei client WiFi dai contatori della registration-table ----------
+    #
+    # Per i client dei CAP torch non è affidabile: se il CAP inoltra il traffico in locale
+    # (o comunque i pacchetti non transitano dall'interfaccia vista dal manager) torch non
+    # vede nulla, mentre la registration-table riporta i byte scambiati con ciascun client,
+    # contati dal CAP. La velocità si ricava dalla differenza tra due letture successive.
+
+    @staticmethod
+    def _reg_bytes(reg: dict) -> Optional[tuple[int, int]]:
+        """(byte inviati al client, byte ricevuti dal client) dal contatore del registration,
+        che è "tx,rx" nel campo `bytes` (o campi separati). None se non presente."""
+        raw = reg.get("bytes")
+        if isinstance(raw, str) and "," in raw:
+            try:
+                tx, rx = raw.split(",", 1)
+                return int(tx), int(rx)
+            except ValueError:
+                return None
+        tx, rx = reg.get("tx-bytes"), reg.get("rx-bytes")
+        if tx is not None and rx is not None:
+            try:
+                return int(tx), int(rx)
+            except ValueError:
+                return None
+        return None
+
+    async def monitor_wifi_clients_traffic(self, targets: list[tuple[str, str]]) -> dict[str, Optional[dict]]:
+        """`targets` = [(ip, mac)] -> {ip: {"rx_bps","tx_bps"} | None}. rx_bps = download del
+        client (byte inviati dall'AP al client), tx_bps = upload."""
+        regs = await self.list_wifi_registrations() + await self.list_capsman_registrations()
+        counters: dict[str, tuple[int, int]] = {}
+        for reg in regs:
+            value = self._reg_bytes(reg)
+            if value is not None:
+                counters[(reg.get("mac-address") or "").upper()] = value
+        now = time.monotonic()
+        samples: dict[str, Optional[dict]] = {}
+        for ip, mac in targets:
+            mac = mac.upper()
+            current = counters.get(mac)
+            if current is None:
+                samples[ip] = None
+                continue
+            previous = self._reg_counters.get(mac)
+            self._reg_counters[mac] = (now, current[0], current[1])
+            if previous is None or now - previous[0] < 0.5:
+                samples[ip] = {"rx_bps": 0, "tx_bps": 0}
+                continue
+            dt = now - previous[0]
+            samples[ip] = {
+                "rx_bps": int(max(0, current[0] - previous[1]) * 8 / dt),
+                "tx_bps": int(max(0, current[1] - previous[2]) * 8 / dt),
+            }
+        return samples
 
     async def monitor_clients_traffic(self, targets: list[tuple[str, str]]) -> dict[str, Optional[dict]]:
         """Traffico di più client con UNA sola chiamata torch per interfaccia (invece di una

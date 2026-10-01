@@ -904,7 +904,7 @@ function registerClientTraffic(client, cell) {
     cell.className = "traffic unavailable";
     return;
   }
-  clientTrafficTargets.push({ ip: client.ip_address, iface, cell });
+  clientTrafficTargets.push({ ip: client.ip_address, iface, mac: client.mac_address, cell });
 }
 
 function startClientTrafficPolling() {
@@ -919,7 +919,7 @@ function startClientTrafficPolling() {
     try {
       const res = await api("/clients/traffic/batch", {
         method: "POST",
-        body: JSON.stringify({ targets: live.map((t) => ({ ip_address: t.ip, interface: t.iface })) }),
+        body: JSON.stringify({ targets: live.map((t) => ({ ip_address: t.ip, interface: t.iface, mac_address: t.mac })) }),
       });
       for (const t of live) {
         const fresh = trafficNode((res.samples || {})[t.ip]);
