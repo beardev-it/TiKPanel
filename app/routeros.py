@@ -597,14 +597,15 @@ class RouterOSClient:
         return f"{cls._ACCESS_ALLOW_PREFIX}{mac_address.upper()}"
 
     async def _ensure_reject_rule(self, path: str, disabled: Optional[bool]) -> None:
-        """Garantisce che la regola 'reject' esista, sia l'ULTIMA dell'access-list e (se
-        `disabled` non è None) abbia lo stato richiesto. Se non è in fondo la si ricrea:
-        RouterOS valuta in ordine, e una 'reject' davanti alle 'accept' le renderebbe inutili."""
+        """Garantisce che la regola 'reject' esista (e, se `disabled` non è None, abbia lo stato
+        richiesto) e che le regole TikPanel stiano IN CIMA all'access-list: RouterOS valuta in
+        ordine e vince la prima che corrisponde, quindi una regola preesistente (es. un
+        'accept' generico) davanti alla nostra 'reject' la renderebbe inutile."""
         entries = await self._list_optional(path)
         rejects = [e for e in entries if e.get("comment") == self._ACCESS_REJECT_COMMENT]
         if not rejects:
             if disabled is None:
-                return  # niente da riordinare: l'access-list non è ancora stata attivata
+                return  # l'access-list non è ancora stata attivata: niente da ordinare
             await self._request(
                 "PUT",
                 path,
@@ -614,30 +615,31 @@ class RouterOSClient:
                     "disabled": "yes" if disabled else "no",
                 },
             )
-            return
+        else:
+            reject = rejects[0]
+            if disabled is not None and (reject.get("disabled") == "true") != disabled:
+                await self._request("PATCH", f"{path}/{reject['.id']}", json={"disabled": "yes" if disabled else "no"})
+            for extra in rejects[1:]:
+                await self._request("DELETE", f"{path}/{extra['.id']}")
+        await self._normalize_order(path)
 
-        reject = rejects[0]
-        currently_disabled = reject.get("disabled") == "true"
-        target_disabled = currently_disabled if disabled is None else disabled
-        is_last = bool(entries) and entries[-1].get(".id") == reject.get(".id")
-        if not is_last:
-            await self._request("DELETE", f"{path}/{reject['.id']}")
-            await self._request(
-                "PUT",
-                path,
-                json={
-                    "action": "reject",
-                    "comment": self._ACCESS_REJECT_COMMENT,
-                    "disabled": "yes" if target_disabled else "no",
-                },
-            )
-        elif target_disabled != currently_disabled:
-            await self._request(
-                "PATCH", f"{path}/{reject['.id']}", json={"disabled": "yes" if target_disabled else "no"}
-            )
-        # più regole 'reject' nostre (non dovrebbe succedere): teniamo solo la prima
-        for extra in rejects[1:]:
-            await self._request("DELETE", f"{path}/{extra['.id']}")
+    async def _normalize_order(self, path: str) -> None:
+        """Ordine voluto: [accept TikPanel...] [reject TikPanel] [regole non nostre...]."""
+        entries = await self._list_optional(path)
+        ours_accept = [
+            e for e in entries if (e.get("comment") or "").startswith(self._ACCESS_ALLOW_PREFIX)
+        ]
+        reject = [e for e in entries if e.get("comment") == self._ACCESS_REJECT_COMMENT][:1]
+        ours_ids = {e[".id"] for e in ours_accept + reject}
+        foreign = [e for e in entries if e[".id"] not in ours_ids]
+        desired = [e[".id"] for e in ours_accept + reject + foreign]
+        current = [e[".id"] for e in entries]
+        for i, wanted in enumerate(desired):
+            if i >= len(current) or current[i] == wanted:
+                continue
+            await self._request("POST", f"{path}/move", json={"numbers": wanted, "destination": current[i]})
+            current.remove(wanted)
+            current.insert(i, wanted)
 
     async def get_access_control_status(self) -> dict:
         menus = await self._access_menus()
@@ -724,6 +726,11 @@ class RouterOSClient:
         for _stack, path in out["menus"]:
             out["access_lists"][path] = await self._list_optional(path)
         return out
+
+    async def torch_debug(self, interface: str) -> dict:
+        """Righe grezze di torch su un'interfaccia (diagnostica del traffico per client)."""
+        flows = await self._torch_flows(interface)
+        return {"interface": interface, "rows": len(flows or []), "flows": (flows or [])[:40]}
 
     async def _get_optional(self, path: str) -> Optional[dict]:
         """Come _list_optional, ma per un menu che espone un singolo oggetto (non una
@@ -834,6 +841,12 @@ class RouterOSClient:
             if mac:
                 lease_by_mac[mac] = lease
 
+        arp_by_mac: dict[str, str] = {}
+        for entry in await self.list_arp():
+            mac = (entry.get("mac-address") or "").upper()
+            if mac and entry.get("address") and entry.get("complete") != "false":
+                arp_by_mac.setdefault(mac, entry["address"])
+
         blocked_macs = {
             self._strip_mac_mask(r.get("src-mac-address")) for r in await self._list_bridge_block_rules()
         }
@@ -849,7 +862,7 @@ class RouterOSClient:
             by_radio.setdefault(iface, []).append(
                 {
                     "mac_address": mac,
-                    "ip_address": lease.get("address"),
+                    "ip_address": lease.get("address") or arp_by_mac.get(mac),
                     "hostname": hostname,
                     "hostname_source": hostname_source,
                     "signal_strength": reg.get("signal-strength"),

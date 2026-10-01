@@ -573,6 +573,16 @@ async def access_control_learning_stop(body: Optional[AccessEnableIn] = None) ->
 
 
 @app.get(
+    "/clients/traffic/debug",
+    tags=["wifi"],
+    dependencies=[Depends(require_api_key)],
+    summary="Righe grezze di torch su un'interfaccia (diagnostica)",
+)
+async def clients_traffic_debug(interface: str) -> dict:
+    return await get_client().torch_debug(interface)
+
+
+@app.get(
     "/access-control/debug",
     tags=["access-list"],
     dependencies=[Depends(require_api_key)],
