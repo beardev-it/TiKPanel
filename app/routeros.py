@@ -586,13 +586,46 @@ class RouterOSClient:
         legacy = await self._menu_available("/caps-man/interface")
         wifi = await self._menu_available("/interface/wifi")
         wifi_capsman = await self._get_optional("/interface/wifi/capsman")
-        wifi_v2 = bool(wifi_capsman) and wifi_capsman.get("enabled") == "true"
+        wifi_v2 = bool(wifi_capsman) and wifi_capsman.get("enabled") in ("true", "yes")
         menus: list[tuple[str, str]] = []
         if wifi and (wifi_v2 or not legacy):
             menus.append(("wifi", "/interface/wifi/access-list"))
-        if legacy:
+        # Il vecchio /caps-man può esistere come menu anche quando i CAP sono gestiti dal
+        # CAPsMAN del pacchetto 'wifi': in quel caso la sua access-list non ha alcun effetto
+        # (una versione precedente ci scriveva per errore, vedi _drop_legacy_rules).
+        if legacy and not (wifi and wifi_v2):
             menus.append(("capsman", "/caps-man/access-list"))
         return menus
+
+    async def _migrate_legacy_rules(self) -> None:
+        """Una versione precedente scriveva nell'access-list legacy (/caps-man) anche quando i CAP
+        sono gestiti dal CAPsMAN del pacchetto 'wifi', dove non ha effetto. Se sono rimaste
+        regole TikPanel lì, le sposta in /interface/wifi/access-list (stesso stato) e le toglie."""
+        menus = await self._access_menus()
+        if not any(stack == "wifi" for stack, _ in menus) or any(stack == "capsman" for stack, _ in menus):
+            return
+        legacy_path = "/caps-man/access-list"
+        legacy = [
+            e
+            for e in await self._list_optional(legacy_path)
+            if (e.get("comment") or "") == self._ACCESS_REJECT_COMMENT
+            or (e.get("comment") or "").startswith(self._ACCESS_ALLOW_PREFIX)
+        ]
+        if not legacy:
+            return
+        path = "/interface/wifi/access-list"
+        existing = {e.get("comment") for e in await self._list_optional(path)}
+        for entry in legacy:
+            comment = entry.get("comment")
+            if comment not in existing:
+                body = {"action": entry.get("action", "accept"), "comment": comment}
+                if entry.get("mac-address"):
+                    body["mac-address"] = entry["mac-address"]
+                if comment == self._ACCESS_REJECT_COMMENT:
+                    body["disabled"] = "yes" if entry.get("disabled") == "true" else "no"
+                await self._request("PUT", path, json=body)
+            await self._request("DELETE", f"{legacy_path}/{entry['.id']}")
+        await self._normalize_order(path)
 
     @classmethod
     def _allow_comment(cls, mac_address: str) -> str:
@@ -644,6 +677,7 @@ class RouterOSClient:
             current.insert(i, wanted)
 
     async def get_access_control_status(self) -> dict:
+        await self._migrate_legacy_rules()
         menus = await self._access_menus()
         if not menus:
             return {"available": False, "stacks": [], "configured": False, "enforced": False, "allowed": []}
@@ -676,6 +710,7 @@ class RouterOSClient:
 
     async def allow_client(self, mac_address: str) -> dict:
         """Autorizza un client: regola 'accept' per il suo MAC su ogni access-list CAPsMAN."""
+        await self._migrate_legacy_rules()
         menus = await self._access_menus()
         if not menus:
             raise RouterOSError("CAPsMAN non rilevato su questo router: access-list non disponibile", status_code=409)
@@ -705,6 +740,7 @@ class RouterOSClient:
         menus = await self._access_menus()
         if not menus:
             raise RouterOSError("CAPsMAN non rilevato su questo router: access-list non disponibile", status_code=409)
+        await self._migrate_legacy_rules()
         for _stack, path in menus:
             await self._ensure_reject_rule(path, disabled=not enforced)
         return {"enforced": enforced}
@@ -758,7 +794,7 @@ class RouterOSClient:
         # dal vecchio /caps-man legacy). Su router senza il pacchetto 'wifi' il menu non
         # esiste -> _get_optional torna None, e semplicemente non marchiamo nulla.
         wifi_capsman = await self._get_optional("/interface/wifi/capsman")
-        wifi_capsman_v2_enabled = bool(wifi_capsman) and wifi_capsman.get("enabled") == "true"
+        wifi_capsman_v2_enabled = bool(wifi_capsman) and wifi_capsman.get("enabled") in ("true", "yes")
 
         for item in await self._list_optional("/interface/wifi"):
             radios.append(
@@ -1024,7 +1060,15 @@ class RouterOSClient:
         client (byte inviati dall'AP al client), tx_bps = upload."""
         regs = await self.list_wifi_registrations() + await self.list_capsman_registrations()
         counters: dict[str, tuple[int, int]] = {}
+        direct: dict[str, dict] = {}
         for reg in regs:
+            # RouterOS 7 espone già le velocità istantanee per client (lato AP: tx = verso il client)
+            tx_bps, rx_bps = reg.get("tx-bits-per-second"), reg.get("rx-bits-per-second")
+            if tx_bps is not None and rx_bps is not None:
+                try:
+                    direct[(reg.get("mac-address") or "").upper()] = {"rx_bps": int(tx_bps), "tx_bps": int(rx_bps)}
+                except ValueError:
+                    pass
             value = self._reg_bytes(reg)
             if value is not None:
                 counters[(reg.get("mac-address") or "").upper()] = value
@@ -1032,6 +1076,9 @@ class RouterOSClient:
         samples: dict[str, Optional[dict]] = {}
         for ip, mac in targets:
             mac = mac.upper()
+            if mac in direct:
+                samples[ip] = direct[mac]
+                continue
             current = counters.get(mac)
             if current is None:
                 samples[ip] = None
