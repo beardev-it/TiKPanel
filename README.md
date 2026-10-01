@@ -177,8 +177,16 @@ non sono più mostrati). L'autorizzazione avviene solo tramite l'**access-list W
   assegnazioni ed etichette sono salvati in `clients.json` (`CLIENTS_FILE`, di default
   `/data/clients.json`, accanto a `users.json`) e restano anche se il client si scollega.
 
+- **Assegnare un client a un gruppo**: menu a tendina accanto al client (nell'elenco delle reti
+  e nella tabella dell'access-list), oppure più client insieme con la barra di selezione.
+- **Gruppi per utente** (tab Utenti, colonna "Gruppi di client"): un utente non amministratore con
+  uno o più gruppi assegnati vede e gestisce (blocca/sblocca/disconnette) solo i client di quei
+  gruppi, e non può toccare access-list, gruppi, interfacce e VLAN. Senza gruppi vede tutto,
+  come prima. Un gruppo che è l'unico assegnato a qualche utente non si può eliminare (quegli
+  utenti finirebbero per vedere tutti i client).
+
 API: `GET /access-control`, `POST /access-control/{enable,learning/start,learning/stop,allow,revoke}`,
-`POST /groups`, `PATCH|DELETE /groups/{nome}`, `PUT /clients/group`.
+`GET|POST /groups`, `PATCH|DELETE /groups/{nome}`, `PUT /clients/group`.
 
 ### Segreti in chiaro: cosa sapere
 

@@ -204,6 +204,9 @@
           </form>
         </div>
         <div id="groupsList" class="groups-list"><span class="muted">Nessun gruppo creato</span></div>
+        <p class="muted groups-hint">Per mettere un client in un gruppo usa il menu accanto al suo nome
+          (o selezionane più di uno e usa "Assegna al gruppo"). I gruppi visibili a ciascun utente si
+          scelgono nella tab Utenti.</p>
         <label class="group-filter">Mostra client
           <select id="groupFilter">
             <option value="">di tutti i gruppi</option>
@@ -262,10 +265,10 @@
 
       <table class="data-table">
         <thead>
-          <tr><th>Username</th><th>Ruolo</th><th>Stato</th><th>Creato</th><th></th></tr>
+          <tr><th>Username</th><th>Ruolo</th><th>Gruppi di client</th><th>Stato</th><th>Creato</th><th></th></tr>
         </thead>
         <tbody id="usersBody">
-          <tr><td colspan="5" class="empty">Nessun dato — connettiti al servizio</td></tr>
+          <tr><td colspan="6" class="empty">Nessun dato — connettiti al servizio</td></tr>
         </tbody>
       </table>
     </section>

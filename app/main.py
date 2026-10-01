@@ -9,6 +9,7 @@ Il servizio è pensato per girare come container:
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import os
 import time
@@ -145,6 +146,80 @@ def get_clients_store() -> ClientStore:
     return app.state.clients
 
 
+class Principal:
+    """Chi sta facendo la richiesta. `groups` = None: nessuna restrizione (X-API-Key,
+    amministratore, o utente senza gruppi assegnati); altrimenti l'insieme dei gruppi di
+    client che l'utente può vedere e gestire."""
+
+    def __init__(self, username: Optional[str], role: Optional[str], groups: Optional[set[str]]):
+        self.username = username
+        self.role = role
+        self.groups = groups
+
+    @property
+    def restricted(self) -> bool:
+        return self.groups is not None
+
+
+async def get_principal(
+    x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+) -> Principal:
+    settings = get_settings()
+    if x_api_key is not None and hmac.compare_digest(x_api_key, settings.api_key):
+        return Principal(None, None, None)
+    if authorization and authorization.lower().startswith("bearer "):
+        try:
+            payload = decode_session_token(settings, authorization[7:].strip())
+        except Exception:
+            payload = None
+        if payload and not payload.get("bootstrap"):
+            # gruppi letti dal file a ogni richiesta: una modifica vale subito, senza nuovo login
+            user = await get_users().get_user(str(payload.get("sub")))
+            if user and user.role != "amministratore" and user.groups:
+                return Principal(user.username, user.role, set(user.groups))
+            return Principal(payload.get("sub"), payload.get("role"), None)
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Autenticazione richiesta")
+
+
+_RESTRICTED_DETAIL = "Il tuo utente può gestire solo i client dei gruppi che gli sono assegnati"
+
+
+async def require_unrestricted(principal: Principal = Depends(get_principal)) -> None:
+    """Operazioni globali (access-list, gruppi): non per gli utenti limitati a dei gruppi."""
+    if principal.restricted:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_RESTRICTED_DETAIL)
+
+
+async def _assert_can_manage(principal: Principal, mac: str) -> None:
+    if not principal.restricted:
+        return
+    group = (await get_clients_store().snapshot())["assignments"].get(normalize_mac(mac))
+    if group not in principal.groups:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_RESTRICTED_DETAIL)
+
+
+async def _visible_macs(principal: Principal) -> Optional[set[str]]:
+    """MAC visibili all'utente, o None se li vede tutti."""
+    if not principal.restricted:
+        return None
+    assignments = (await get_clients_store().snapshot())["assignments"]
+    return {mac for mac, group in assignments.items() if group in principal.groups}
+
+
+async def _validate_groups(groups: Optional[list[str]]) -> Optional[list[str]]:
+    if groups is None:
+        return None
+    existing = {g.casefold(): g for g in (await get_clients_store().snapshot())["groups"]}
+    result = []
+    for name in groups:
+        match = existing.get((name or "").strip().casefold())
+        if match is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Gruppo '{name}' non trovato")
+        result.append(match)
+    return result
+
+
 @app.exception_handler(ClientDataError)
 async def client_data_error_handler(_request, exc: ClientDataError) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content={"error": str(exc), "detail": str(exc)})
@@ -236,7 +311,15 @@ async def me(authorization: str | None = Header(default=None)) -> dict:
         payload = decode_session_token(settings, authorization[7:].strip())
     except Exception:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sessione non valida o scaduta")
-    return {"username": payload.get("sub"), "role": payload.get("role"), "auth": "session"}
+    user = await get_users().get_user(str(payload.get("sub")))
+    groups = user.groups if user and user.role != "amministratore" else []
+    return {
+        "username": payload.get("sub"),
+        "role": payload.get("role"),
+        "auth": "session",
+        "groups": groups,
+        "restricted": bool(groups),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +335,9 @@ async def list_users() -> list[UserOut]:
 @app.post("/users", response_model=UserOut, tags=["users"], dependencies=[Depends(require_admin)])
 async def create_user(body: UserCreateIn) -> UserOut:
     try:
-        user = await get_users().create_user(body.username, body.password, body.role)
+        user = await get_users().create_user(
+            body.username, body.password, body.role, await _validate_groups(body.groups)
+        )
     except UserError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return UserOut(**user.model_dump())
@@ -262,7 +347,11 @@ async def create_user(body: UserCreateIn) -> UserOut:
 async def update_user(username: str, body: UserUpdateIn) -> UserOut:
     try:
         user = await get_users().update_user(
-            username, password=body.password, role=body.role, disabled=body.disabled
+            username,
+            password=body.password,
+            role=body.role,
+            disabled=body.disabled,
+            groups=await _validate_groups(body.groups),
         )
     except UserError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -307,7 +396,7 @@ async def get_interface(name: str) -> InterfaceOut:
     "/interfaces/{name}/state",
     response_model=InterfaceOut,
     tags=["interfacce"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(require_unrestricted)],
     summary="Abilita o disabilita un'interfaccia fisica o virtuale",
 )
 async def set_interface_state(name: str, body: InterfaceStateIn) -> InterfaceOut:
@@ -373,7 +462,7 @@ async def get_vlan(name: str) -> VlanOut:
     return VlanOut.from_raw(raw)
 
 
-@app.post("/vlans", response_model=VlanOut, status_code=201, tags=["vlan"], dependencies=[Depends(require_api_key)])
+@app.post("/vlans", response_model=VlanOut, status_code=201, tags=["vlan"], dependencies=[Depends(require_api_key), Depends(require_unrestricted)])
 async def create_vlan(body: VlanCreateIn) -> VlanOut:
     await get_client().create_vlan(
         name=body.name,
@@ -386,7 +475,7 @@ async def create_vlan(body: VlanCreateIn) -> VlanOut:
     return VlanOut.from_raw(raw)
 
 
-@app.patch("/vlans/{name}", response_model=VlanOut, tags=["vlan"], dependencies=[Depends(require_api_key)])
+@app.patch("/vlans/{name}", response_model=VlanOut, tags=["vlan"], dependencies=[Depends(require_api_key), Depends(require_unrestricted)])
 async def update_vlan(name: str, body: VlanUpdateIn) -> VlanOut:
     await get_client().update_vlan(
         name,
@@ -405,7 +494,7 @@ async def update_vlan(name: str, body: VlanUpdateIn) -> VlanOut:
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
     tags=["vlan"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(require_unrestricted)],
 )
 async def delete_vlan(name: str) -> Response:
     await get_client().delete_vlan(name)
@@ -418,9 +507,10 @@ async def delete_vlan(name: str) -> Response:
 
 
 @app.get("/clients", response_model=list[ClientOut], tags=["client"], dependencies=[Depends(require_api_key)])
-async def list_clients() -> list[ClientOut]:
+async def list_clients(principal: Principal = Depends(get_principal)) -> list[ClientOut]:
     raw = await get_client().list_clients()
-    return [ClientOut(**item) for item in raw]
+    visible = await _visible_macs(principal)
+    return [ClientOut(**item) for item in raw if visible is None or (item.get("mac_address") or "").upper() in visible]
 
 
 @app.post(
@@ -537,15 +627,22 @@ async def _kick_unauthorized() -> None:
     dependencies=[Depends(require_api_key)],
     summary="Stato dell'access-list CAPsMAN, client autorizzati, gruppi e assegnazioni",
 )
-async def access_control_state() -> AccessControlOut:
-    return await _access_control_state()
+async def access_control_state(principal: Principal = Depends(get_principal)) -> AccessControlOut:
+    state = await _access_control_state()
+    if principal.restricted:
+        # un utente limitato vede solo i propri gruppi e i loro client
+        state.allowed = [a for a in state.allowed if a.group in principal.groups]
+        state.groups = [g for g in state.groups if g.name in principal.groups]
+        state.assignments = {m: g for m, g in state.assignments.items() if g in principal.groups}
+        state.labels = {m: l for m, l in state.labels.items() if m in state.assignments}
+    return state
 
 
 @app.post(
     "/access-control/enable",
     response_model=AccessControlOut,
     tags=["access-list"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(require_unrestricted)],
     summary="Attiva l'access-list: possono collegarsi solo i client autorizzati",
 )
 async def access_control_enable(body: AccessEnableIn) -> AccessControlOut:
@@ -567,7 +664,7 @@ async def access_control_enable(body: AccessEnableIn) -> AccessControlOut:
     "/access-control/learning/start",
     response_model=AccessControlOut,
     tags=["access-list"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(require_unrestricted)],
     summary="Sospende l'access-list per aggiungere nuovi client; si riattiva da sola alla scadenza",
 )
 async def access_control_learning_start(body: AccessLearningStartIn) -> AccessControlOut:
@@ -581,7 +678,7 @@ async def access_control_learning_start(body: AccessLearningStartIn) -> AccessCo
     "/access-control/learning/stop",
     response_model=AccessControlOut,
     tags=["access-list"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(require_unrestricted)],
     summary="Termina la modalità aggiunta client e riattiva l'access-list",
 )
 async def access_control_learning_stop(body: Optional[AccessEnableIn] = None) -> AccessControlOut:
@@ -605,7 +702,7 @@ async def clients_traffic_debug(interface: str) -> dict:
 @app.get(
     "/access-control/debug",
     tags=["access-list"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(require_unrestricted)],
     summary="Dati grezzi di access-list, interfacce e registrazioni WiFi (diagnostica)",
 )
 async def access_control_debug() -> dict:
@@ -615,7 +712,7 @@ async def access_control_debug() -> dict:
 @app.post(
     "/access-control/allow",
     tags=["access-list"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(require_unrestricted)],
     summary="Aggiunge un client (per MAC) all'access-list",
 )
 async def access_control_allow(body: AccessAllowIn) -> dict:
@@ -629,7 +726,7 @@ async def access_control_allow(body: AccessAllowIn) -> dict:
 @app.post(
     "/access-control/revoke",
     tags=["access-list"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(require_unrestricted)],
     summary="Toglie un client dall'access-list (opzionalmente lo disconnette subito)",
 )
 async def access_control_revoke(body: AccessRevokeIn) -> dict:
@@ -642,30 +739,59 @@ async def access_control_revoke(body: AccessRevokeIn) -> dict:
     return result
 
 
-@app.post("/groups", tags=["gruppi"], dependencies=[Depends(require_api_key)], summary="Crea un gruppo di client")
+@app.get("/groups", tags=["gruppi"], dependencies=[Depends(require_api_key)], summary="Nomi dei gruppi di client")
+async def list_groups(principal: Principal = Depends(get_principal)) -> list[str]:
+    groups = (await get_clients_store().snapshot())["groups"]
+    return [g for g in groups if not principal.restricted or g in principal.groups]
+
+
+@app.post("/groups", tags=["gruppi"], dependencies=[Depends(require_api_key), Depends(require_unrestricted)], summary="Crea un gruppo di client")
 async def create_group(body: GroupIn) -> dict:
     return {"name": await get_clients_store().create_group(body.name)}
 
 
-@app.patch("/groups/{name}", tags=["gruppi"], dependencies=[Depends(require_api_key)], summary="Rinomina un gruppo")
+@app.patch("/groups/{name}", tags=["gruppi"], dependencies=[Depends(require_api_key), Depends(require_unrestricted)], summary="Rinomina un gruppo")
 async def rename_group(name: str, body: GroupIn) -> dict:
-    return {"name": await get_clients_store().rename_group(name, body.name)}
+    old = next(
+        (g for g in (await get_clients_store().snapshot())["groups"] if g.casefold() == name.casefold()), name
+    )
+    new = await get_clients_store().rename_group(name, body.name)
+    await get_users().rename_group_refs(old, new)
+    return {"name": new}
 
 
 @app.delete(
     "/groups/{name}",
     tags=["gruppi"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(require_unrestricted)],
     summary="Elimina un gruppo (i suoi client restano senza gruppo)",
 )
 async def delete_group(name: str) -> dict:
-    return {"unassigned": await get_clients_store().delete_group(name)}
+    old = next(
+        (g for g in (await get_clients_store().snapshot())["groups"] if g.casefold() == name.casefold()), name
+    )
+    # Un utente senza gruppi vede tutti i client: togliergli l'ultimo gruppo eliminandolo
+    # gli allargherebbe i permessi senza che nessuno l'abbia deciso. Meglio fermarsi.
+    only_group = [
+        u.username for u in await get_users().list_users() if u.role != "amministratore" and u.groups == [old]
+    ]
+    if only_group:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Il gruppo '{old}' è l'unico assegnato a: {', '.join(only_group)}. Eliminandolo "
+                "vedrebbero tutti i client: assegna loro prima un altro gruppo."
+            ),
+        )
+    unassigned = await get_clients_store().delete_group(name)
+    await get_users().remove_group_refs(old)
+    return {"unassigned": unassigned}
 
 
 @app.put(
     "/clients/group",
     tags=["gruppi"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(require_unrestricted)],
     summary="Assegna uno o più client a un gruppo (group vuoto = toglie dal gruppo)",
 )
 async def assign_clients_group(body: GroupAssignIn) -> dict:
@@ -684,8 +810,12 @@ async def assign_clients_group(body: GroupAssignIn) -> dict:
     dependencies=[Depends(require_api_key)],
     summary="Reti WiFi configurate (qualunque stack: wifi/CAPsMAN/wireless) con i client collegati per radio",
 )
-async def list_wifi_networks() -> list[WifiNetworkOut]:
+async def list_wifi_networks(principal: Principal = Depends(get_principal)) -> list[WifiNetworkOut]:
     raw = await get_client().list_wifi_networks()
+    visible = await _visible_macs(principal)
+    if visible is not None:
+        for net in raw:
+            net["clients"] = [c for c in net.get("clients", []) if c["mac_address"].upper() in visible]
     return [WifiNetworkOut(**item) for item in raw]
 
 
@@ -706,7 +836,8 @@ async def wifi_module_status() -> WifiModuleStatusOut:
     dependencies=[Depends(require_api_key)],
     summary="Blocca un client per MAC address (drop sul firewall del bridge, chain input+forward)",
 )
-async def block_client(body: ClientBlockIn) -> dict:
+async def block_client(body: ClientBlockIn, principal: Principal = Depends(get_principal)) -> dict:
+    await _assert_can_manage(principal, body.mac_address)
     return await get_client().block_client(body.mac_address, body.ip_address)
 
 
@@ -716,7 +847,8 @@ async def block_client(body: ClientBlockIn) -> dict:
     dependencies=[Depends(require_api_key)],
     summary="Rimuove un client dalla lista di blocco",
 )
-async def unblock_client(body: ClientBlockIn) -> dict:
+async def unblock_client(body: ClientBlockIn, principal: Principal = Depends(get_principal)) -> dict:
+    await _assert_can_manage(principal, body.mac_address)
     return await get_client().unblock_client(body.mac_address, body.ip_address)
 
 
@@ -726,7 +858,8 @@ async def unblock_client(body: ClientBlockIn) -> dict:
     dependencies=[Depends(require_api_key)],
     summary="Forza la disconnessione immediata di un client già collegato (wifi/hotspot/ARP)",
 )
-async def disconnect_client(body: ClientDisconnectIn) -> dict:
+async def disconnect_client(body: ClientDisconnectIn, principal: Principal = Depends(get_principal)) -> dict:
+    await _assert_can_manage(principal, body.mac_address)
     return await get_client().disconnect_client(body.mac_address)
 
 
@@ -736,7 +869,8 @@ async def disconnect_client(body: ClientDisconnectIn) -> dict:
     dependencies=[Depends(require_api_key)],
     summary="Blocca il client e ne forza subito la disconnessione (block + disconnect in un solo passo)",
 )
-async def kick_client(body: ClientBlockIn) -> dict:
+async def kick_client(body: ClientBlockIn, principal: Principal = Depends(get_principal)) -> dict:
+    await _assert_can_manage(principal, body.mac_address)
     client = get_client()
     block_result = await client.block_client(body.mac_address, body.ip_address)
     disconnect_result = await client.disconnect_client(body.mac_address)

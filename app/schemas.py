@@ -273,15 +273,18 @@ class UserOut(BaseModel):
     role: Role
     disabled: bool = False
     created_at: int
+    groups: list[str] = Field(default_factory=list, description="Gruppi di client visibili all'utente")
 
 
 class UserCreateIn(BaseModel):
     username: str = Field(..., min_length=1)
     password: str = Field(..., min_length=8, description="Almeno 8 caratteri")
     role: Role
+    groups: list[str] = Field(default_factory=list, description="Gruppi di client; vuoto = tutti")
 
 
 class UserUpdateIn(BaseModel):
     password: Optional[str] = Field(default=None, min_length=8, description="Se valorizzata, cambia la password")
     role: Optional[Role] = None
     disabled: Optional[bool] = None
+    groups: Optional[list[str]] = Field(default=None, description="Gruppi di client; [] = tutti")

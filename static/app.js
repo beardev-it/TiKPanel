@@ -639,11 +639,11 @@ function formatRole(role) {
 
 async function loadUsers() {
   const body = document.getElementById("usersBody");
-  body.innerHTML = `<tr><td colspan="5" class="empty">Caricamento…</td></tr>`;
+  body.innerHTML = `<tr><td colspan="6" class="empty">Caricamento…</td></tr>`;
   try {
-    const data = await api("/users");
+    const [data, groups] = await Promise.all([api("/users"), api("/groups").catch(() => [])]);
     if (!data.length) {
-      body.innerHTML = `<tr><td colspan="5" class="empty">Nessun utente</td></tr>`;
+      body.innerHTML = `<tr><td colspan="6" class="empty">Nessun utente</td></tr>`;
       return;
     }
     body.innerHTML = "";
@@ -681,6 +681,7 @@ async function loadUsers() {
         el("tr", {}, [
           el("td", { text: user.username + (isSelf ? " (tu)" : "") }),
           el("td", {}, [roleSelect]),
+          el("td", {}, [buildUserGroups(user, groups)]),
           el("td", {}, [statusBadge]),
           el("td", { text: new Date(user.created_at * 1000).toLocaleString("it-IT") }),
           el("td", {}, [toggleBtn, resetPwBtn, deleteBtn]),
@@ -688,8 +689,43 @@ async function loadUsers() {
       );
     }
   } catch (err) {
-    body.innerHTML = `<tr><td colspan="5" class="empty">${escapeHtml(err.message)}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="6" class="empty">${escapeHtml(err.message)}</td></tr>`;
   }
+}
+
+// Gruppi di client assegnati a un utente: una casella per gruppo, il cambio si salva subito.
+// Nessun gruppo = vede tutti i client; l'amministratore vede sempre tutto.
+function buildUserGroups(user, groups) {
+  if (user.role === "amministratore") return el("span", { class: "muted", text: "tutti (amministratore)" });
+  if (!groups.length) return el("span", { class: "muted", text: "nessun gruppo creato" });
+  const chosen = new Set(user.groups || []);
+  const wrap = el("div", { class: "user-groups" });
+  for (const g of groups) {
+    const box = el("input", { type: "checkbox" });
+    box.checked = chosen.has(g);
+    box.addEventListener("change", () => {
+      if (box.checked) chosen.add(g);
+      else chosen.delete(g);
+      updateUserGroups(user.username, groups.filter((x) => chosen.has(x)));
+    });
+    wrap.appendChild(el("label", { class: "user-group-option" }, [box, el("span", { text: g })]));
+  }
+  wrap.appendChild(
+    el("span", { class: "muted user-groups-hint", text: chosen.size ? "" : "nessuno selezionato: vede tutti i client" })
+  );
+  return wrap;
+}
+
+async function updateUserGroups(username, groups) {
+  await withOverlay(async () => {
+    try {
+      await api(`/users/${encodeURIComponent(username)}`, { method: "PATCH", body: JSON.stringify({ groups }) });
+      toast(groups.length ? `${username}: gruppi ${groups.join(", ")}` : `${username}: vede tutti i client`, "ok");
+    } catch (err) {
+      toast(err.message, "error");
+    }
+    await loadUsers();
+  });
 }
 
 async function updateUserRole(username, role, selectEl) {
@@ -1072,9 +1108,10 @@ function renderAccessPanel() {
   badge.textContent = d.learning ? "aggiunta client" : enforced ? "attiva" : "disattivata";
 
   const learning = !!d.learning;
-  document.getElementById("accessEnableBtn").classList.toggle("hidden", enforced || learning);
-  document.getElementById("accessLearnBtn").classList.toggle("hidden", learning || !d.configured);
-  document.getElementById("accessStopBtn").classList.toggle("hidden", !learning);
+  const ro = !!state.restricted; // utente limitato ai suoi gruppi: niente operazioni globali
+  document.getElementById("accessEnableBtn").classList.toggle("hidden", ro || enforced || learning);
+  document.getElementById("accessLearnBtn").classList.toggle("hidden", ro || learning || !d.configured);
+  document.getElementById("accessStopBtn").classList.toggle("hidden", ro || !learning);
   renderAccessHint();
   renderAccessPending();
 
@@ -1091,10 +1128,12 @@ function renderAccessPanel() {
       el("tr", {}, [
         el("td", { text: a.label || "—" }),
         el("td", { text: mac }),
-        el("td", { text: a.group || "—" }),
+        el("td", {}, [state.restricted ? el("span", { text: a.group || "—" }) : buildGroupSelect(mac)]),
         el("td", {}, [el("span", { class: "badge " + (connected ? "badge-up" : ""), text: connected ? "collegato" : "offline" })]),
         el("td", {}, [
-          el("button", { class: "btn btn-sm btn-danger", text: "Rimuovi", onclick: () => revokeClient(mac, connected) }),
+          state.restricted
+            ? el("span")
+            : el("button", { class: "btn btn-sm btn-danger", text: "Rimuovi", onclick: () => revokeClient(mac, connected) }),
         ]),
       ])
     );
@@ -1106,7 +1145,9 @@ function renderAccessPending() {
   const box = document.getElementById("accessPending");
   const list = document.getElementById("accessPendingList");
   const allowed = allowedSet();
-  const pending = [...lastClientsByMac.values()].filter((c) => !allowed.has(c.mac_address.toUpperCase()));
+  const pending = state.restricted
+    ? []
+    : [...lastClientsByMac.values()].filter((c) => !allowed.has(c.mac_address.toUpperCase()));
   box.classList.toggle("hidden", !pending.length);
   list.innerHTML = "";
   for (const c of pending) {
@@ -1277,6 +1318,35 @@ document.getElementById("bulkAllowClients").addEventListener("click", async () =
   });
 });
 
+// Menu a tendina per scegliere il gruppo di un client: il cambio si salva subito.
+function buildGroupSelect(mac) {
+  const groups = (accessState.data && accessState.data.groups) || [];
+  const current = groupOf(mac);
+  const select = el("select", { class: "group-select", title: "Gruppo del client" }, [
+    el("option", { value: "", text: "— nessun gruppo —" }),
+    ...groups.map((g) => el("option", { value: g.name, text: g.name })),
+  ]);
+  select.value = current;
+  if (!groups.length) {
+    select.disabled = true;
+    select.title = "Crea prima un gruppo nel riquadro Gruppi";
+  }
+  select.addEventListener("change", () => assignGroup([mac], select.value));
+  return select;
+}
+
+async function assignGroup(macs, group) {
+  await withOverlay(async () => {
+    try {
+      await api("/clients/group", { method: "PUT", body: JSON.stringify({ mac_addresses: macs, group: group || null }) });
+      toast(group ? `${macs.length === 1 ? macs[0] : macs.length + " client"} → gruppo '${group}'` : "Tolto dal gruppo", "ok");
+      await refreshClientsView();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
+}
+
 function buildWifiClientRow(client) {
   lastClientsByMac.set(client.mac_address, client);
   const label = (accessState.data && accessState.data.labels[client.mac_address.toUpperCase()]) || "";
@@ -1294,7 +1364,11 @@ function buildWifiClientRow(client) {
   if (access) {
     badges.push(el("span", { class: "badge " + (isAllowed ? "badge-up" : "badge-down"), text: isAllowed ? "autorizzato" : "non autorizzato" }));
   }
-  if (group) badges.push(el("span", { class: "tag group-tag", text: group }));
+  if (state.restricted) {
+    if (group) badges.push(el("span", { class: "tag group-tag", text: group }));
+  } else {
+    badges.push(buildGroupSelect(client.mac_address));
+  }
 
   const actions = [trafficCell];
   if (access && !isAllowed) {
@@ -1339,12 +1413,30 @@ function updateClientBulkBar() {
 }
 
 async function loadClientsAndNetworks() {
+  try {
+    const me = await api("/auth/me");
+    state.restricted = !!me.restricted;
+    state.groups = me.groups || [];
+  } catch (_) {
+    state.restricted = false;
+  }
+  applyRestrictedUi();
   selection.networks.clear();
   selection.clients.clear();
   updateNetworkBulkBar();
   updateClientBulkBar();
   loadWifiModuleStatus();
   await refreshClientsView(true);
+}
+
+// Un utente con gruppi assegnati vede solo i suoi client: nascondi i comandi globali
+function applyRestrictedUi() {
+  const ro = !!state.restricted;
+  for (const id of ["groupCreateForm", "bulkAllowClients", "bulkGroupSelect", "bulkAssignGroup", "networkBulkBar"]) {
+    const node = document.getElementById(id);
+    if (node) node.classList.toggle("restricted-hidden", ro);
+  }
+  document.getElementById("groupsPanel").classList.toggle("restricted", ro);
 }
 
 // Ricarica reti, client e stato access-list e ridisegna. Con `initial` mostra "Caricamento…".
@@ -1388,6 +1480,7 @@ function renderWifiNetworks(networks) {
       : null;
 
     const netCheckbox = el("input", { type: "checkbox" });
+    if (state.restricted) netCheckbox.classList.add("restricted-hidden");
     netCheckbox.checked = selection.networks.has(net.name);
     netCheckbox.addEventListener("change", () => {
       if (netCheckbox.checked) selection.networks.add(net.name);
@@ -1395,11 +1488,13 @@ function renderWifiNetworks(networks) {
       updateNetworkBulkBar();
     });
 
-    const toggleBtn = el("button", {
-      class: "btn btn-sm " + (isUp ? "btn-up" : "btn-down"),
-      text: net.disabled ? "Attiva" : "Disattiva",
-      onclick: () => toggleNetwork(net.name, !net.disabled),
-    });
+    const toggleBtn = state.restricted
+      ? el("span")
+      : el("button", {
+          class: "btn btn-sm " + (isUp ? "btn-up" : "btn-down"),
+          text: net.disabled ? "Attiva" : "Disattiva",
+          onclick: () => toggleNetwork(net.name, !net.disabled),
+        });
 
     const trafficCell = trafficPlaceholder();
     if (net.source !== "sconosciuta") {

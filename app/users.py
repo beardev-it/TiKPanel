@@ -51,6 +51,9 @@ class UserRecord(BaseModel):
     role: Role
     disabled: bool = False
     created_at: int = Field(default_factory=lambda: int(time.time()))
+    # Gruppi di client (vedi clientstore) assegnati all'utente. Vuoto = nessuna restrizione;
+    # se valorizzato e l'utente non è amministratore, vede e gestisce solo quei client.
+    groups: list[str] = Field(default_factory=list)
 
 
 class UserError(RuntimeError):
@@ -193,14 +196,18 @@ class UserStore:
             return None
         return user
 
-    async def create_user(self, username: str, password: str, role: Role) -> UserRecord:
+    async def create_user(
+        self, username: str, password: str, role: Role, groups: Optional[list[str]] = None
+    ) -> UserRecord:
         async with self._lock:
             users = self._read()
             if username in users:
                 raise UserError(f"L'utente '{username}' esiste già")
             if role == "amministratore":
                 self._assert_no_existing_admin(users, exclude=username)
-            record = UserRecord(username=username, password_hash=self._hash_password(password), role=role)
+            record = UserRecord(
+                username=username, password_hash=self._hash_password(password), role=role, groups=groups or []
+            )
             users[username] = record
             self._write(users)
             return record
@@ -212,6 +219,7 @@ class UserStore:
         password: Optional[str] = None,
         role: Optional[Role] = None,
         disabled: Optional[bool] = None,
+        groups: Optional[list[str]] = None,
     ) -> UserRecord:
         async with self._lock:
             users = self._read()
@@ -232,10 +240,35 @@ class UserStore:
                 user.role = role
             if disabled is not None:
                 user.disabled = disabled
+            if groups is not None:
+                user.groups = list(dict.fromkeys(groups))
 
             users[username] = user
             self._write(users)
             return user
+
+    async def rename_group_refs(self, old: str, new: str) -> None:
+        """Allinea i gruppi assegnati agli utenti quando un gruppo viene rinominato."""
+        async with self._lock:
+            users = self._read()
+            changed = False
+            for user in users.values():
+                if old in user.groups:
+                    user.groups = [new if g == old else g for g in user.groups]
+                    changed = True
+            if changed:
+                self._write(users)
+
+    async def remove_group_refs(self, name: str) -> None:
+        async with self._lock:
+            users = self._read()
+            changed = False
+            for user in users.values():
+                if name in user.groups:
+                    user.groups = [g for g in user.groups if g != name]
+                    changed = True
+            if changed:
+                self._write(users)
 
     async def delete_user(self, username: str) -> None:
         async with self._lock:
