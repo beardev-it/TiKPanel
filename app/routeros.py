@@ -705,6 +705,26 @@ class RouterOSClient:
             await self._ensure_reject_rule(path, disabled=not enforced)
         return {"enforced": enforced}
 
+    async def access_debug(self) -> dict:
+        """Dati grezzi utili a capire perché l'access-list non si comporta come previsto."""
+        out: dict = {
+            "menus": await self._access_menus(),
+            "wifi_capsman": await self._get_optional("/interface/wifi/capsman"),
+            "wifi_interfaces": [
+                {k: i.get(k) for k in ("name", "dynamic", "disabled", "running", "master-interface", "radio-mac")}
+                for i in await self._list_optional("/interface/wifi")
+            ],
+            "wifi_registrations": [
+                {k: r.get(k) for k in ("interface", "mac-address", "ssid")}
+                for r in await self.list_wifi_registrations()
+            ],
+            "capsman_registrations": len(await self.list_capsman_registrations()),
+            "access_lists": {},
+        }
+        for _stack, path in out["menus"]:
+            out["access_lists"][path] = await self._list_optional(path)
+        return out
+
     async def _get_optional(self, path: str) -> Optional[dict]:
         """Come _list_optional, ma per un menu che espone un singolo oggetto (non una
         lista), es. /interface/wifi/capsman. None se il menu non esiste su questo router."""
@@ -742,7 +762,8 @@ class RouterOSClient:
                     "disabled": item.get("disabled") == "true",
                     "running": item.get("running") == "true",
                     "source": "wifi",
-                    "managed_by_capsman": wifi_capsman_v2_enabled,
+                    # interfacce create dinamicamente dal CAPsMAN (flag D) sono comunque dei CAP
+                    "managed_by_capsman": wifi_capsman_v2_enabled or item.get("dynamic") == "true",
                 }
             )
 
@@ -785,19 +806,23 @@ class RouterOSClient:
         abilitato). Radio locali/standalone (/interface/wireless, o /interface/wifi senza
         CAPsMAN) e client non WiFi restano fuori: TikPanel gestisce i client dei CAP.
         """
-        radios = await self.list_wifi_radios()
+        all_radios = await self.list_wifi_radios()
         if capsman_only:
             radios = [
                 r
-                for r in radios
+                for r in all_radios
                 if r["source"] == "capsman" or (r["source"] == "wifi" and r.get("managed_by_capsman"))
             ]
+            # Radio locali (non gestite da CAPsMAN): i loro client restano fuori. Tutto il resto
+            # si tiene, così un CAP non riconosciuto come tale non fa sparire i suoi client.
+            local_names = {r["name"] for r in all_radios if r not in radios}
             wireless_regs: list[dict] = []
             capsman_regs = await self.list_capsman_registrations()
-            wifi_regs = (
-                await self.list_wifi_registrations() if any(r["source"] == "wifi" for r in radios) else []
-            )
+            wifi_regs = [
+                r for r in await self.list_wifi_registrations() if r.get("interface") not in local_names
+            ]
         else:
+            radios = all_radios
             wireless_regs = await self.list_wireless_registrations()
             capsman_regs = await self.list_capsman_registrations()
             wifi_regs = await self.list_wifi_registrations()

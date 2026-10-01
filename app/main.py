@@ -14,7 +14,7 @@ import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from fastapi.responses import JSONResponse
@@ -500,6 +500,16 @@ async def _access_control_state() -> AccessControlOut:
     )
 
 
+async def _kick_unauthorized() -> None:
+    """Disconnette i client CAPsMAN collegati che non hanno una regola di autorizzazione."""
+    client = get_client()
+    allowed = set((await client.get_access_control_status())["allowed"])
+    for net in await client.list_wifi_networks(capsman_only=True):
+        for c in net.get("clients", []):
+            if c["mac_address"].upper() not in allowed:
+                await client.disconnect_client(c["mac_address"])
+
+
 @app.get(
     "/access-control",
     response_model=AccessControlOut,
@@ -528,6 +538,8 @@ async def access_control_enable(body: AccessEnableIn) -> AccessControlOut:
                     await get_clients_store().set_label(c["mac_address"], c["hostname"])
     await client.set_access_enforcement(True)
     await get_clients_store().set_learning_until(None)
+    if body.disconnect_unauthorized:
+        await _kick_unauthorized()
     return await _access_control_state()
 
 
@@ -552,10 +564,22 @@ async def access_control_learning_start(body: AccessLearningStartIn) -> AccessCo
     dependencies=[Depends(require_api_key)],
     summary="Termina la modalità aggiunta client e riattiva l'access-list",
 )
-async def access_control_learning_stop() -> AccessControlOut:
+async def access_control_learning_stop(body: Optional[AccessEnableIn] = None) -> AccessControlOut:
     await get_client().set_access_enforcement(True)
     await get_clients_store().set_learning_until(None)
+    if body and body.disconnect_unauthorized:
+        await _kick_unauthorized()
     return await _access_control_state()
+
+
+@app.get(
+    "/access-control/debug",
+    tags=["access-list"],
+    dependencies=[Depends(require_api_key)],
+    summary="Dati grezzi di access-list, interfacce e registrazioni WiFi (diagnostica)",
+)
+async def access_control_debug() -> dict:
+    return await get_client().access_debug()
 
 
 @app.post(

@@ -207,6 +207,9 @@ class AccessEnableIn(BaseModel):
     authorize_connected: bool = Field(
         False, description="Prima di attivare, autorizza anche i client CAPsMAN collegati in questo momento"
     )
+    disconnect_unauthorized: bool = Field(
+        False, description="Dopo l'attivazione, disconnette i client collegati che non sono autorizzati"
+    )
 
 
 class AccessLearningStartIn(BaseModel):
