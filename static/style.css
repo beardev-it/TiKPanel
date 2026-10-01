@@ -653,3 +653,21 @@ main { padding: 24px 28px 48px; max-width: 1080px; margin: 0 auto; }
 .group-filter { display: inline-flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text-muted); }
 .group-tag { background: var(--accent-soft); color: var(--accent); }
 .bulk-group-select { max-width: 200px; }
+.access-pending {
+  border: 1px solid var(--warn);
+  background: var(--warn-soft);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin: 8px 0 4px;
+}
+.access-pending h4 { margin: 0 0 6px; font-size: 0.9rem; color: var(--warn); }
+.pending-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border-soft);
+}
+.pending-row:first-child { border-top: 0; }

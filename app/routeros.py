@@ -183,6 +183,26 @@ class RouterOSClient:
                 }
         return samples
 
+    async def monitor_radios_traffic(self, names: list[str]) -> dict[str, Optional[dict]]:
+        """Traffico delle radio CAPsMAN come somma delle velocità dei client registrati su
+        ciascuna (registration-table). /interface/monitor-traffic sulle interfacce dinamiche
+        dei CAP non è affidabile: il traffico inoltrato in locale dal CAP non passa dal
+        manager, e i contatori che restano possono finire sull'interfaccia sbagliata."""
+        names = [n for n in dict.fromkeys(names) if n]
+        if not names:
+            return {}
+        samples: dict[str, Optional[dict]] = {n: {"rx_bps": 0, "tx_bps": 0} for n in names}
+        for reg in await self.list_wifi_registrations() + await self.list_capsman_registrations():
+            sample = samples.get(reg.get("interface"))
+            if sample is None:
+                continue
+            try:
+                sample["tx_bps"] += int(reg.get("tx-bits-per-second") or 0)  # verso i client
+                sample["rx_bps"] += int(reg.get("rx-bits-per-second") or 0)  # dai client
+            except ValueError:
+                pass
+        return samples
+
     # ---------- VLAN (interface/vlan) ----------
 
     async def list_vlans(self) -> list[dict]:

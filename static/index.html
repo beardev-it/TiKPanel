@@ -175,11 +175,15 @@
           </div>
           <div class="access-actions">
             <button id="accessEnableBtn" class="btn btn-sm btn-up hidden" type="button">Attiva access-list</button>
-            <button id="accessLearnBtn" class="btn btn-sm btn-primary hidden" type="button">Aggiungi nuovi client</button>
-            <button id="accessStopBtn" class="btn btn-sm btn-up hidden" type="button">Termina e riattiva</button>
+            <button id="accessLearnBtn" class="btn btn-sm btn-down hidden" type="button">Disattiva per aggiungere client</button>
+            <button id="accessStopBtn" class="btn btn-sm btn-up hidden" type="button">Riattiva access-list</button>
           </div>
         </div>
         <p id="accessHint" class="muted"></p>
+        <div id="accessPending" class="access-pending hidden">
+          <h4>Collegati ma non autorizzati</h4>
+          <div id="accessPendingList"></div>
+        </div>
         <table class="data-table access-table">
           <thead>
             <tr><th>Nome</th><th>MAC</th><th>Gruppo</th><th>Stato</th><th></th></tr>

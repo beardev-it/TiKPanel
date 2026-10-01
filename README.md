@@ -163,13 +163,16 @@ non sono più mostrati). L'autorizzazione avviene solo tramite l'**access-list W
   commenti non vengono toccate.
 - **Attiva access-list**: abilita la regola di blocco; si collegano solo i client in elenco.
   Alla prima attivazione puoi autorizzare anche i client collegati in quel momento.
-- **Aggiungi nuovi client**: disabilita la regola di blocco per N minuti (predefinito 10,
-  `ACCESS_LEARNING_DEFAULT_MINUTES`). Collega il nuovo dispositivo, poi premi **Autorizza**
-  sulla sua riga e infine **Termina e riattiva**. Se ti dimentichi, la riattivazione avviene da
-  sola alla scadenza (la gestisce il server, quindi vale anche a pagina chiusa o dopo un
-  riavvio del container).
-- I client già collegati restano collegati quando l'access-list viene attivata o un client viene
-  rimosso: l'effetto si vede alla riconnessione (usa "Disconnetti" o l'opzione alla rimozione).
+- **Disattiva per aggiungere client**: sospende la regola di blocco (si riattiva da sola dopo
+  `ACCESS_LEARNING_DEFAULT_MINUTES`, predefinito 10, anche a pagina chiusa: lo gestisce il
+  server). Collega il nuovo dispositivo: la pagina si aggiorna da sola e lo mostra in
+  "Collegati ma non autorizzati". Premi **Autorizza**, poi **Riattiva access-list**: i client
+  collegati non autorizzati vengono disconnessi e al ricollegamento sono rifiutati.
+- Rimuovendo un client dall'elenco puoi scegliere se disconnetterlo subito o lasciarlo collegato
+  fino al prossimo ricollegamento.
+- Con il CAPsMAN del pacchetto `wifi` le regole vanno in `/interface/wifi/access-list`; con il
+  CAPsMAN legacy in `/caps-man/access-list`. Il traffico delle radio e dei client CAP è letto dalla
+  registration-table (velocità per client riportate dai CAP), non da torch.
 - **Gruppi**: nomi scelti da te, assegnabili ai client selezionati e filtrabili. Gruppi,
   assegnazioni ed etichette sono salvati in `clients.json` (`CLIENTS_FILE`, di default
   `/data/clients.json`, accanto a `users.json`) e restano anche se il client si scollega.

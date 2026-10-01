@@ -169,6 +169,10 @@ class ClientTrafficIn(BaseModel):
 
 class InterfaceTrafficBatchIn(BaseModel):
     names: list[str] = Field(default_factory=list, description="Nomi delle interfacce visibili")
+    radios: list[str] = Field(
+        default_factory=list,
+        description="Radio CAPsMAN visibili: traffico = somma dei client dalla registration-table",
+    )
 
 
 class ClientTrafficBatchIn(BaseModel):

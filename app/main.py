@@ -325,7 +325,11 @@ async def set_interface_state(name: str, body: InterfaceStateIn) -> InterfaceOut
     summary="Traffico istantaneo (bit/s) di più interfacce con una sola chiamata; chiave = nome",
 )
 async def get_interfaces_traffic_batch(body: InterfaceTrafficBatchIn) -> ClientTrafficBatchOut:
-    raw = await get_client().monitor_interfaces_traffic(body.names)
+    client = get_client()
+    radios = set(body.radios)
+    raw = await client.monitor_interfaces_traffic([n for n in body.names if n not in radios])
+    if radios:
+        raw.update(await client.monitor_radios_traffic(list(radios)))
     return ClientTrafficBatchOut(
         samples={
             name: (
@@ -518,7 +522,12 @@ async def _kick_unauthorized() -> None:
     for net in await client.list_wifi_networks(capsman_only=True):
         for c in net.get("clients", []):
             if c["mac_address"].upper() not in allowed:
-                await client.disconnect_client(c["mac_address"])
+                try:
+                    await client.disconnect_client(c["mac_address"])
+                except RouterOSError:
+                    # l'access-list è comunque già attiva: il client verrà rifiutato al prossimo
+                    # ricollegamento; non far fallire l'intera operazione per uno solo
+                    logging.getLogger("tikpanel").warning("Disconnessione di %s non riuscita", c["mac_address"])
 
 
 @app.get(

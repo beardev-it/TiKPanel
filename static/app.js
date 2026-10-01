@@ -859,10 +859,12 @@ async function disconnectClient(client) {
 
 // Traffico delle interfacce (fisiche, VLAN, radio): una sola richiesta per tutte quelle
 // visibili nella tab, invece di una per riga. Le celle si registrano al render.
-const interfaceTrafficTargets = []; // { name, cell }
+const interfaceTrafficTargets = []; // { name, cell, radio }
 
-function registerInterfaceTraffic(name, cell) {
-  interfaceTrafficTargets.push({ name, cell });
+// radio=true per le radio CAPsMAN: il loro traffico è la somma dei client registrati (dal
+// router), perché monitor-traffic sulle interfacce dinamiche dei CAP non è affidabile
+function registerInterfaceTraffic(name, cell, radio = false) {
+  interfaceTrafficTargets.push({ name, cell, radio });
 }
 
 function startInterfaceTrafficPolling() {
@@ -877,7 +879,10 @@ function startInterfaceTrafficPolling() {
     try {
       const res = await api("/interfaces/traffic/batch", {
         method: "POST",
-        body: JSON.stringify({ names: [...new Set(live.map((t) => t.name))] }),
+        body: JSON.stringify({
+          names: [...new Set(live.filter((t) => !t.radio).map((t) => t.name))],
+          radios: [...new Set(live.filter((t) => t.radio).map((t) => t.name))],
+        }),
       });
       for (const t of live) {
         const fresh = trafficNode((res.samples || {})[t.name]);
@@ -1007,6 +1012,33 @@ function startAccessTimers() {
       if (accessState.deadline) loadAccessControl();
     }, 15000)
   );
+  // Aggiornamento automatico dell'elenco: quando un client si collega (o si scollega) la
+  // pagina si ridisegna da sola. Con l'access-list sospesa controlla spesso, perché è il
+  // momento in cui si aspetta il nuovo client da autorizzare.
+  let lastCheck = 0;
+  pollers.set(
+    "clients-live",
+    setInterval(async () => {
+      const d = accessState.data;
+      const open = d && (d.learning || !d.enforced);
+      if (!open && Date.now() - lastCheck < 15000) return;
+      if (document.hidden || _pageOverlayDepth > 0) return;
+      lastCheck = Date.now();
+      try {
+        const networks = await api("/wifi-networks");
+        if (clientsSignature(networks) !== accessState.signature) await refreshClientsView();
+      } catch (_) {
+        // silenzioso: riprova al giro successivo
+      }
+    }, 3000)
+  );
+}
+
+function clientsSignature(networks) {
+  return networks
+    .flatMap((n) => (n.clients || []).map((c) => `${n.name}/${c.mac_address}/${c.ip_address || ""}`))
+    .sort()
+    .join("|");
 }
 
 function renderAccessHint() {
@@ -1018,9 +1050,9 @@ function renderAccessHint() {
   } else if (d.learning && accessState.deadline) {
     hint.textContent = `Modalità aggiunta client: l'access-list è sospesa, chiunque può collegarsi. Si riattiva da sola tra ${formatCountdown(
       (accessState.deadline - Date.now()) / 1000
-    )}. Autorizza i client collegati, poi premi "Termina e riattiva".`;
+    )}. Collega il nuovo dispositivo: comparirà qui sotto da solo. Premi "Autorizza", poi "Riattiva access-list".`;
   } else if (d.enforced) {
-    hint.textContent = "Possono collegarsi solo i client in elenco. I client già collegati restano collegati finché non si riconnettono.";
+    hint.textContent = "Possono collegarsi solo i client autorizzati. Per aggiungerne uno nuovo premi \"Disattiva per aggiungere client\".";
   } else {
     hint.textContent = "L'access-list è disattivata: chiunque può collegarsi.";
   }
@@ -1044,6 +1076,7 @@ function renderAccessPanel() {
   document.getElementById("accessLearnBtn").classList.toggle("hidden", learning || !d.configured);
   document.getElementById("accessStopBtn").classList.toggle("hidden", !learning);
   renderAccessHint();
+  renderAccessPending();
 
   const body = document.getElementById("accessAllowedBody");
   body.innerHTML = "";
@@ -1062,6 +1095,31 @@ function renderAccessPanel() {
         el("td", {}, [el("span", { class: "badge " + (connected ? "badge-up" : ""), text: connected ? "collegato" : "offline" })]),
         el("td", {}, [
           el("button", { class: "btn btn-sm btn-danger", text: "Rimuovi", onclick: () => revokeClient(mac, connected) }),
+        ]),
+      ])
+    );
+  }
+}
+
+// Client collegati ma non autorizzati: durante l'aggiunta di un nuovo client è qui che compare
+function renderAccessPending() {
+  const box = document.getElementById("accessPending");
+  const list = document.getElementById("accessPendingList");
+  const allowed = allowedSet();
+  const pending = [...lastClientsByMac.values()].filter((c) => !allowed.has(c.mac_address.toUpperCase()));
+  box.classList.toggle("hidden", !pending.length);
+  list.innerHTML = "";
+  for (const c of pending) {
+    const name = c.hostname || c.mac_address;
+    list.appendChild(
+      el("div", { class: "pending-row" }, [
+        el("div", { class: "wifi-client-main" }, [
+          el("span", { class: "wifi-client-mac", text: name }),
+          el("span", { class: "wifi-client-sub", text: [c.hostname ? c.mac_address : "", c.ip_address, c.interface].filter(Boolean).join(" · ") }),
+        ]),
+        el("div", { class: "wifi-client-actions" }, [
+          el("button", { class: "btn btn-sm btn-primary", text: "Autorizza", onclick: () => allowClient(c) }),
+          el("button", { class: "btn btn-sm btn-danger", text: "Disconnetti", onclick: () => disconnectClient(c) }),
         ]),
       ])
     );
@@ -1111,41 +1169,25 @@ async function accessAction(path, body, okMessage) {
   });
 }
 
-function confirmKickUnauthorized() {
-  return confirm(
-    "Vuoi disconnettere subito i client collegati che non sono nell'access-list?\n\nOK = disconnettili ora (dovranno riautenticarsi e verranno rifiutati), Annulla = restano collegati finché non si riconnettono."
-  );
-}
-
 document.getElementById("accessEnableBtn").addEventListener("click", () => {
   const d = accessState.data;
   const first = d && !d.configured;
   const authorizeConnected =
-    first && confirm("Attivando l'access-list per la prima volta, vuoi autorizzare anche i client CAPsMAN collegati adesso?\n\nOK = autorizzali, Annulla = autorizza solo quelli già in elenco.");
-  const kick = !authorizeConnected && confirmKickUnauthorized();
+    first && confirm("Attivando l'access-list per la prima volta, vuoi autorizzare anche i client collegati adesso?\n\nOK = autorizzali, Annulla = verranno disconnessi.");
+  // i client collegati non autorizzati vengono disconnessi subito: al ricollegamento sono rifiutati
   accessAction(
     "/access-control/enable",
-    { authorize_connected: !!authorizeConnected, disconnect_unauthorized: !!kick },
-    "Access-list attivata"
+    { authorize_connected: !!authorizeConnected, disconnect_unauthorized: true },
+    "Access-list attiva"
   );
 });
 
-document.getElementById("accessLearnBtn").addEventListener("click", () => {
-  const minutes = prompt(
-    `Per quanti minuti sospendere l'access-list? Durante questo tempo chiunque può collegarsi; poi si riattiva da sola.`,
-    String((accessState.data && accessState.data.default_learning_minutes) || 10)
-  );
-  if (minutes === null) return;
-  const n = parseInt(minutes, 10);
-  if (!Number.isFinite(n) || n < 1 || n > 120) {
-    toast("Inserisci un numero di minuti tra 1 e 120", "error");
-    return;
-  }
-  accessAction("/access-control/learning/start", { minutes: n }, "Modalità aggiunta client attiva");
-});
+document.getElementById("accessLearnBtn").addEventListener("click", () =>
+  accessAction("/access-control/learning/start", {}, "Access-list disattivata: collega il nuovo client")
+);
 
 document.getElementById("accessStopBtn").addEventListener("click", () =>
-  accessAction("/access-control/learning/stop", { disconnect_unauthorized: confirmKickUnauthorized() }, "Access-list riattivata")
+  accessAction("/access-control/learning/stop", { disconnect_unauthorized: true }, "Access-list riattivata")
 );
 
 async function allowClient(client) {
@@ -1314,6 +1356,7 @@ async function refreshClientsView(initial = false) {
     const [networks] = await Promise.all([api("/wifi-networks"), loadAccessControl()]);
     lastNetworksByName = new Map(networks.map((n) => [n.name, n]));
     lastClientsByMac = new Map();
+    accessState.signature = clientsSignature(networks);
     renderWifiNetworks(networks);
     renderAccessPanel(); // ora che sappiamo chi è collegato, aggiorna anche lo stato "collegato/offline"
     startInterfaceTrafficPolling();
@@ -1360,7 +1403,7 @@ function renderWifiNetworks(networks) {
 
     const trafficCell = trafficPlaceholder();
     if (net.source !== "sconosciuta") {
-      registerInterfaceTraffic(net.name, trafficCell);
+      registerInterfaceTraffic(net.name, trafficCell, true);
     }
 
     const allClients = net.clients || [];
