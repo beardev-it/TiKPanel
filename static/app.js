@@ -1040,26 +1040,8 @@ function renderAccessPanel() {
   badge.textContent = d.learning ? "aggiunta client" : enforced ? "attiva" : "disattivata";
 
   const learning = !!d.learning;
-  function confirmKickUnauthorized() {
-  return confirm(
-    "Vuoi disconnettere subito i client collegati che non sono nell'access-list?\n\nOK = disconnettili ora (dovranno riautenticarsi e verranno rifiutati), Annulla = restano collegati finché non si riconnettono."
-  );
-}
-
-document.getElementById("accessEnableBtn").addEventListener("click", () => {
-  const d = accessState.data;
-  const first = d && !d.configured;
-  const authorizeConnected =
-    first && confirm("Attivando l'access-list per la prima volta, vuoi autorizzare anche i client CAPsMAN collegati adesso?\n\nOK = autorizzali, Annulla = autorizza solo quelli già in elenco.");
-  const kick = !authorizeConnected && confirmKickUnauthorized();
-  accessAction(
-    "/access-control/enable",
-    { authorize_connected: !!authorizeConnected, disconnect_unauthorized: !!kick },
-    "Access-list attivata"
-  );
-});
-
-document.getElementById("accessLearnBtn").classList.toggle("hidden", learning || !d.configured);
+  document.getElementById("accessEnableBtn").classList.toggle("hidden", enforced || learning);
+  document.getElementById("accessLearnBtn").classList.toggle("hidden", learning || !d.configured);
   document.getElementById("accessStopBtn").classList.toggle("hidden", !learning);
   renderAccessHint();
 
@@ -1129,12 +1111,23 @@ async function accessAction(path, body, okMessage) {
   });
 }
 
+function confirmKickUnauthorized() {
+  return confirm(
+    "Vuoi disconnettere subito i client collegati che non sono nell'access-list?\n\nOK = disconnettili ora (dovranno riautenticarsi e verranno rifiutati), Annulla = restano collegati finché non si riconnettono."
+  );
+}
+
 document.getElementById("accessEnableBtn").addEventListener("click", () => {
   const d = accessState.data;
   const first = d && !d.configured;
   const authorizeConnected =
     first && confirm("Attivando l'access-list per la prima volta, vuoi autorizzare anche i client CAPsMAN collegati adesso?\n\nOK = autorizzali, Annulla = autorizza solo quelli già in elenco.");
-  accessAction("/access-control/enable", { authorize_connected: !!authorizeConnected }, "Access-list attivata");
+  const kick = !authorizeConnected && confirmKickUnauthorized();
+  accessAction(
+    "/access-control/enable",
+    { authorize_connected: !!authorizeConnected, disconnect_unauthorized: !!kick },
+    "Access-list attivata"
+  );
 });
 
 document.getElementById("accessLearnBtn").addEventListener("click", () => {
